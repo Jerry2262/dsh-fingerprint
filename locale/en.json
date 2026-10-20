@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "LLM Fingerprint",
+    "description": "Captures paper-protocol fingerprint records on configured provider/model routes and compares any two records."
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "name": "@local/dsh-llm-fingerprint",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "description": "Paper-protocol fingerprint records and comparison panel for configured DSH provider/model routes.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jerry2262/dsh-fingerprint.git"
+  },
+  "homepage": "https://github.com/Jerry2262/dsh-fingerprint",
+  "bugs": {
+    "url": "https://github.com/Jerry2262/dsh-fingerprint/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "llm",
+    "fingerprint",
+    "model-verification"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "core.js",
+    "client.js",
+    "prompts.json",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check core.js && node --check client.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

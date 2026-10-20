@@ -1,0 +1,167 @@
+{
+  "version": "1.0.0",
+  "source": "https://zenodo.org/records/21278793 (config/prompts.json), paper arXiv:2607.10252",
+  "license": "Code MIT; prompts/data CC-BY-4.0, attribution Tomáš Bruckner",
+  "languages": [
+    "en",
+    "ru",
+    "zh",
+    "ar"
+  ],
+  "system_prompts": {
+    "en": "Answer with a single word or a single number only. Output nothing else: no explanation, no punctuation, no quotation marks.",
+    "ru": "Отвечай только одним словом или одним числом. Не выводи ничего больше: без объяснений, без знаков препинания, без кавычек.",
+    "zh": "只用一个词或一个数字回答。不要输出任何其他内容：不要解释，不要标点符号，不要引号。",
+    "ar": "أجب بكلمة واحدة أو رقم واحد فقط. لا تكتب أي شيء آخر: لا شرح ولا علامات ترقيم ولا علامات اقتباس."
+  },
+  "tasks": [
+    {
+      "id": "num100-random",
+      "paper": 1,
+      "category": "number",
+      "condition": "random",
+      "answer_space": "integer 1-100",
+      "normalize_as": "integer",
+      "notes": "Core fingerprint probe; known human-like bias toward 7/37/42/73 etc.",
+      "prompts": {
+        "en": "Name a random number between 1 and 100.",
+        "ru": "Назови случайное число от 1 до 100.",
+        "zh": "说出一个1到100之间的随机数。",
+        "ar": "اذكر رقماً عشوائياً بين 1 و100."
+      }
+    },
+    {
+      "id": "num10-random",
+      "paper": 1,
+      "category": "number",
+      "condition": "random",
+      "answer_space": "integer 1-10",
+      "normalize_as": "integer",
+      "notes": "Small answer space: high per-cell counts, precise distribution estimates.",
+      "prompts": {
+        "en": "Name a random number between 1 and 10.",
+        "ru": "Назови случайное число от 1 до 10.",
+        "zh": "说出一个1到10之间的随机数。",
+        "ar": "اذكر رقماً عشوائياً بين 1 و10."
+      }
+    },
+    {
+      "id": "num-favorite",
+      "paper": 1,
+      "category": "number",
+      "condition": "favorite",
+      "answer_space": "any number",
+      "normalize_as": "integer",
+      "notes": "Favorite-vs-random contrast is itself part of the fingerprint.",
+      "prompts": {
+        "en": "What is your favorite number? Name it.",
+        "ru": "Какое твоё любимое число? Назови его.",
+        "zh": "你最喜欢的数字是什么？说出它。",
+        "ar": "ما هو رقمك المفضل؟ اذكره."
+      }
+    },
+    {
+      "id": "letter-random",
+      "paper": 1,
+      "category": "letter",
+      "condition": "random",
+      "answer_space": "one letter/character of the language's native script",
+      "normalize_as": "grapheme",
+      "notes": "zh has no alphabet; the zh variant asks for a random Chinese character. Within-language comparison only.",
+      "prompts": {
+        "en": "Name a random letter of the alphabet.",
+        "ru": "Назови случайную букву алфавита.",
+        "zh": "说出一个随机的汉字。",
+        "ar": "اذكر حرفاً عشوائياً من الحروف الأبجدية."
+      }
+    },
+    {
+      "id": "word-random",
+      "paper": 1,
+      "category": "word",
+      "condition": "random",
+      "answer_space": "any single word",
+      "normalize_as": "word",
+      "notes": "Open answer space; long tail expected — analysed via top-k mass and entropy, not full distribution.",
+      "prompts": {
+        "en": "Name a random word.",
+        "ru": "Назови случайное слово.",
+        "zh": "说出一个随机的词。",
+        "ar": "اذكر كلمة عشوائية."
+      }
+    },
+    {
+      "id": "color-random",
+      "paper": 1,
+      "category": "color",
+      "condition": "random",
+      "answer_space": "color name",
+      "normalize_as": "word",
+      "notes": "Colors are additionally mapped to a language-independent canonical color code (stats/01) to enable the cross-language color analysis.",
+      "prompts": {
+        "en": "Name a random color.",
+        "ru": "Назови случайный цвет.",
+        "zh": "说出一个随机的颜色。",
+        "ar": "اذكر لوناً عشوائياً."
+      }
+    },
+    {
+      "id": "color-favorite",
+      "paper": 1,
+      "category": "color",
+      "condition": "favorite",
+      "answer_space": "color name",
+      "normalize_as": "word",
+      "notes": "Favorite-vs-random contrast; also feeds cross-language color analysis.",
+      "prompts": {
+        "en": "What is your favorite color? Name it.",
+        "ru": "Какой твой любимый цвет? Назови его.",
+        "zh": "你最喜欢的颜色是什么？说出它。",
+        "ar": "ما هو لونك المفضل؟ اذكره."
+      }
+    },
+    {
+      "id": "animal-random",
+      "paper": 1,
+      "category": "animal",
+      "condition": "random",
+      "answer_space": "animal name",
+      "normalize_as": "word",
+      "prompts": {
+        "en": "Name a random animal.",
+        "ru": "Назови случайное животное.",
+        "zh": "说出一个随机的动物。",
+        "ar": "اذكر حيواناً عشوائياً."
+      }
+    },
+    {
+      "id": "city-random",
+      "paper": 1,
+      "category": "city",
+      "condition": "random",
+      "answer_space": "city name",
+      "normalize_as": "word",
+      "prompts": {
+        "en": "Name a random city.",
+        "ru": "Назови случайный город.",
+        "zh": "说出一个随机的城市。",
+        "ar": "اذكر مدينة عشوائية."
+      }
+    },
+    {
+      "id": "coin-flip",
+      "paper": 1,
+      "category": "binary",
+      "condition": "random",
+      "answer_space": "heads|tails (language-specific pair)",
+      "normalize_as": "binary",
+      "notes": "Binary probe: single-parameter distribution, extremely cheap, surprisingly discriminative (known heads-bias).",
+      "prompts": {
+        "en": "Flip a coin. Answer \"heads\" or \"tails\".",
+        "ru": "Подбрось монету. Ответь «орёл» или «решка».",
+        "zh": "抛一枚硬币。回答“正面”或“反面”。",
+        "ar": "ارمِ قطعة نقود. أجب \"صورة\" أو \"كتابة\"."
+      }
+    }
+  ]
+}
