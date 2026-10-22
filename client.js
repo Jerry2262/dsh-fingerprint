@@ -13,6 +13,7 @@ window.__ModuleLoader__.load({
       subtitle: 'One fingerprint record is one full paper-protocol capture of a provider/model route. Compare any two: different models, or the same target before and after.',
       newCheckpoint: 'New fingerprint record',
       provider: 'Provider',
+      noProviders: 'No providers available',
       model: 'Model',
       reps: 'Repetitions per cell',
       estimated: 'Estimated',
@@ -64,7 +65,7 @@ window.__ModuleLoader__.load({
       nonReasoning: 'Non-reasoning model; answers directly.',
       incompatibleHint: 'Greyed-out models cannot disable reasoning, so the paper protocol cannot capture them.',
       noCompatibleModels: 'This provider has no model that can disable reasoning.',
-      noCompatibleModelsShort: 'No compatible model',
+      noCompatibleModelsShort: 'No models eligible for capture',
       offAvailable: 'Reasoning will be disabled (off) for capture.',
       effort: 'Reasoning effort',
       started: 'Capture started:',
@@ -120,6 +121,7 @@ window.__ModuleLoader__.load({
       subtitle: '一条指纹记录就是一次完整的论文协议采集：对某个服务商/模型跑一遍 40 个 cell。任选两条比较：不同模型，或同一目标的前后两次。',
       newCheckpoint: '采集新指纹',
       provider: '服务商',
+      noProviders: '暂无服务商',
       model: '模型',
       reps: '每 cell 重复次数',
       estimated: '预计',
@@ -171,7 +173,7 @@ window.__ModuleLoader__.load({
       nonReasoning: '非推理模型，直接回答。',
       incompatibleHint: '灰色模型不支持关闭推理，论文协议无法采集。',
       noCompatibleModels: '该服务商没有支持关闭推理的模型，不能用于论文协议。',
-      noCompatibleModelsShort: '无可用模型',
+      noCompatibleModelsShort: '无符合采集条件的模型',
       offAvailable: '采集时将关闭推理（off）。',
       effort: '推理档位',
       started: '指纹采集已开始：',
@@ -717,7 +719,7 @@ window.__ModuleLoader__.load({
           try {
             const [targetData, checkpointData] = await Promise.all([api('/targets'), api('/checkpoints')]);
             if (cancelled) return;
-            const providers = targetData.providers || [];
+            const providers = (targetData.providers || []).filter((entry) => (entry.models || []).length > 0);
             setTargets(providers);
             setCheckpoints(checkpointData.checkpoints || []);
             const preferredProvider = providers.find((entry) => (entry.models || []).some((modelEntry) => modelEntry.paperCompatible !== false))
@@ -906,9 +908,10 @@ window.__ModuleLoader__.load({
                 h('select', {
                   style: S.input,
                   value: providerId,
+                  disabled: targets.length === 0,
                   onChange: (event) => changeProvider(event.target.value),
                 },
-                  h('option', { value: '' }, '—'),
+                  targets.length === 0 ? h('option', { value: '' }, t('noProviders')) : null,
                   targets.map((entry) => {
                     const providerHasCompatible = (entry.models || []).some((modelEntry) => modelEntry.paperCompatible !== false);
                     const suffix = (entry.models || []).length > 0 && !providerHasCompatible
