@@ -190,7 +190,7 @@ function adapterMetadata(info) {
 }
 
 async function callModel(ctx, options, signal) {
-  const { provider, model, system, prompt, reasoningEffort } = options;
+  const { provider, model, system, prompt, reasoningEffort, sessionId = randomUUID() } = options;
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const combined = signal ? AbortSignal.any([timeout, signal]) : timeout;
   const started = Date.now();
@@ -206,6 +206,7 @@ async function callModel(ctx, options, signal) {
     messages,
     temperature: TEMPERATURE,
     maxTokens: MAX_TOKENS,
+    sessionId,
     signal: combined,
   };
   if (reasoningEffort) request.reasoningEffort = reasoningEffort;
@@ -234,7 +235,7 @@ async function callModel(ctx, options, signal) {
     });
   }
 
-  return { text, reasoning, usage, finish, latencyMs: Date.now() - started };
+  return { text, reasoning, usage, finish, sessionId, latencyMs: Date.now() - started };
 }
 
 function retryable(error) {
@@ -273,10 +274,12 @@ async function runOne(ctx, meta, cellId, rep, reasoningEffort, signal) {
   const cell = cellById(cellId);
   if (!cell) throw new Error(`unknown cell "${cellId}"`);
   const requestUtc = nowUtc();
+  const sessionId = randomUUID();
   const result = await withRetry(
     () => callModel(ctx, {
       provider: meta.provider,
       model: meta.model,
+      sessionId,
       system: PROMPTS.system_prompts[cell.lang],
       prompt: cell.task.prompts[cell.lang],
       reasoningEffort,
@@ -294,6 +297,7 @@ async function runOne(ctx, meta, cellId, rep, reasoningEffort, signal) {
     provider: meta.provider,
     model: meta.model,
     requestUtc,
+    sessionId: result.sessionId,
     latencyMs: result.latencyMs,
     raw: result.text,
     normalized: normalized.normalized,
@@ -327,7 +331,9 @@ async function runCheckpoint(ctx, root, meta, reasoningEffort) {
 
   let completed = existingKeys.size;
   let attempted = completed;
+  let fatalRequestError = null;
   await pool(pending, CONCURRENCY, async ({ cellId, rep }) => {
+    if (fatalRequestError) return;
     try {
       const record = await runOne(ctx, meta, cellId, rep, reasoningEffort);
       appendFileSync(paths.responses, `${JSON.stringify(record)}\n`);
@@ -336,6 +342,9 @@ async function runCheckpoint(ctx, root, meta, reasoningEffort) {
       addUsage(meta.usage, record.usage);
       if (record.answerClass === 'post_reasoning') meta.reasoningLeakResponses += 1;
     } catch (error) {
+      if (/MissingSessionID/.test(String(error?.message ?? error))) {
+        fatalRequestError = String(error?.message ?? error);
+      }
       meta.failedRequests += 1;
       if (meta.errors.length < 20) {
         meta.errors.push({
@@ -353,6 +362,12 @@ async function runCheckpoint(ctx, root, meta, reasoningEffort) {
   meta.completedAt = nowUtc();
   meta.completedRequests = completed;
   meta.usage = aggregateUsage(records);
+  if (fatalRequestError) {
+    meta.status = 'failed';
+    meta.fatalError = fatalRequestError;
+    writeMeta(paths.meta, meta);
+    return;
+  }
   if (records.length === 0) {
     meta.status = 'failed';
     meta.fatalError = 'no successful responses';
@@ -506,6 +521,7 @@ function createService(ctx, root) {
           cell: cellId,
           lang: cell.lang,
           rep,
+          sessionId: result.sessionId,
           raw: result.text,
           normalized: normalized.normalized,
           answerClass: reasoningLeak ? 'post_reasoning' : normalized.answerClass,
@@ -554,6 +570,7 @@ function createService(ctx, root) {
       reasoningEffort: effort,
       cells: requested,
       reps,
+      sessionPolicy: 'new-per-sample-reuse-on-retry',
       summary,
       responses,
     }, null, 2)}\n`);
@@ -607,7 +624,7 @@ function createService(ctx, root) {
       reasoningPolicy: effort == null ? 'none' : effortIsDisabled(effort) ? 'disabled' : 'least-available',
       reasoningLeakResponses: 0,
       modelInfo: adapterMetadata(info),
-      request: { temperature: TEMPERATURE, maxTokens: MAX_TOKENS, systemPrompt: 'per-cell' },
+      request: { temperature: TEMPERATURE, maxTokens: MAX_TOKENS, systemPrompt: 'per-cell', sessionPolicy: 'new-per-sample-reuse-on-retry' },
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
       errors: [],
       warnings,

@@ -64,7 +64,7 @@ UI 和工具调用同一个 Host 服务，不维护第二套逻辑。
 
 一次采集使用论文的 10 个任务 × 4 种语言 = 40 个 cell，每个 cell 30 次，`temperature=1.0`，`max_tokens=16`，固定的单词 system prompt，关闭 reasoning。答案经过确定性归一化；两条记录的分数是双方有效样本都 ≥10 的 cell 上 base-2 JSD 的平均值。默认 `τ=0.356` 来自论文发布的分半 trial 的 full-battery EER 点。
 
-每次请求只包含论文的 system prompt 和一条 user 探针，不带对话历史、工具或当前会话的 system prompt。
+每次请求只包含论文的 system prompt 和一条 user 探针，不带对话历史、工具或当前会话的 system prompt。每个独立样本使用新的会话标识，同一样本重试沿用标识；标识经 DSH 适配器传递，不创建聊天会话。新标识不保证禁用服务商缓存，具体策略记录在新记录的 `request.sessionPolicy` 中。
 
 更详细的算法、数据模型和兼容性判断见 [docs/DESIGN.md](docs/DESIGN.md)。
 

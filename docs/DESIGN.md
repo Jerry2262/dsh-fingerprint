@@ -65,7 +65,11 @@ llm-fingerprint/
 3. `ctx.llm.resolveModelInfo(provider, model)` 拿 reasoning efforts 和默认 effort；
 4. 计算 `paperCompatible`。
 
-请求走 `ctx.llm.stream({ provider, model, system, messages, temperature: 1, maxTokens: 16, reasoningEffort })`。不传会话 id、历史、工具或当前会话的 system prompt；一次请求只有论文 system prompt 和一条 user 探针。
+请求走 `ctx.llm.stream({ provider, model, system, messages, temperature: 1, maxTokens: 16, reasoningEffort, sessionId })`。每个独立样本（cell × repetition）生成新的 UUID，同一样本的重试沿用该 ID；probe 同样逐样本生成 ID。不创建聊天会话，也不传历史、工具或当前聊天的 system prompt；一次请求只有论文 system prompt 和一条 user 探针。
+
+新记录的 `request.sessionPolicy` 和探针日志的 `sessionPolicy` 为 `new-per-sample-reuse-on-retry`，成功响应保存实际 `sessionId`。旧记录没有这一策略字段，不能假定其会话路由策略相同。会话标识可能影响服务商路由和缓存；新 ID 不保证禁用缓存。
+
+遇到 `MissingSessionID` 时停止调度后续采样，等待已经发出的并发请求结束后将记录标为失败，保留原始错误，不继续发完整批次。
 
 ## 5. 兼容性硬拦截
 
