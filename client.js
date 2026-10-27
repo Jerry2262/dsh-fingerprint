@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-llm-fingerprint',
+  id: 'dsh-fingerprint',
   factory(require) {
     const React = require('react');
     const { useEffect, useMemo, useRef, useState } = React;

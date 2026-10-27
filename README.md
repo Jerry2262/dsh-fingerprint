@@ -19,22 +19,31 @@ dsh-fingerprint 把 DSH 里已经配置好的 `provider/model` 路由当作审�
 ## 要求
 
 - 一个启用 Web GUI 的 DSH profile（需要 `llm`、`tools`、`webServer` 服务）。
+- DSH 0.2.1 系列：实测 `0.2.1-rc.2` 和 `0.2.1-rc.4`，`engines.dsh` 限定 `>=0.2.1-rc.2 <0.2.2-0`。
 - 至少一个配置好的、能关闭 reasoning（`off` / `none`）或本身不推理的 provider/model。
 - Node.js（由 DSH 自带，无需单独安装）。
 
 ## 安装
 
-这个仓库本身就是一个 DSH bundle，不使用 npm 发布。
+### 从 npm 安装
 
-1. 克隆仓库：
+```bash
+dsh plugin --profile web add dsh-fingerprint
+```
 
-   ```bash
-   git clone https://github.com/Jerry2262/dsh-fingerprint.git
-   ```
+把 `web` 换成实际使用的 profile 名。安装后按 DSH 的提示重启，或刷新 Web GUI。
 
-2. 在 DSH 中把该目录作为本地 bundle 安装。支持的方式是让 agent 调用 `plugin_manager` 的 `install_bundle`，`target` 指向仓库的绝对路径。
+### 从 GitHub 安装
 
-3. 如果面板没有出现，刷新一次 Web GUI。点击侧栏的指纹图标打开“LLM 指纹鉴别”。
+```bash
+dsh plugin --profile web add github:Jerry2262/dsh-fingerprint
+```
+
+### 本地开发
+
+克隆仓库，然后让 agent 调用 `plugin_manager` 的 `install_bundle`，`target` 指向仓库的绝对路径。
+
+面板出现后，点击侧栏的指纹图标打开“LLM 指纹鉴别”。
 
 ## 使用
 
