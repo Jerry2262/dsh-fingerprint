@@ -9,15 +9,43 @@ import { readFileSync } from 'node:fs';
 
 export const PROMPTS = JSON.parse(readFileSync(new URL('./prompts.json', import.meta.url), 'utf8'));
 
-/** Paper full-battery EER threshold, recomputed from the released split-scores.json. */
-export const TAU = 0.356;
+/**
+ * Decision cutoff, recomputed from the released split-half trials: the 1st
+ * percentile of different-model distances (27,060 impostor trials).
+ * That operating point keeps false accepts near 1% and false rejects near 18%.
+ */
+export const CUTOFF = 0.28;
+export const FALSE_ACCEPT_RATE = 0.01;
+export const FALSE_REJECT_RATE = 0.182;
+
+/** The threshold is calibrated on the full 40-cell battery with 30 repetitions per cell. */
+export const REQUIRED_CELLS = 40;
+export const REQUIRED_REPS = 30;
 
 export const PAPER_REFERENCE = {
-  sameProviderSplitHalfMedian: 0.14,
+  validityOverall: 0.976,
+  validityPerModelMedian: 0.996,
+  validityMinimum: 0.606,
+  cellEntropyMedianBits: 1.0,
+  modalShareMedian: 0.71,
+  sameModelSplitHalfMedian: 0.14,
   crossProviderMedian: 0.227,
-  crossModelMedian: 0.489,
+  impostorMedian: 0.463,
+  sameModelCellJsdMedian: 0.075,
+  crossModelCellJsdMedian: 0.489,
   fullBatteryAuc: 0.971,
   fullBatteryEer: 0.073,
+  crossProviderAuc: 0.88,
+  familyAccuracy: 0.595,
+  familyChance: 0.184,
+};
+
+/** Values recomputed from the released split-scores, not printed in the paper text. */
+export const RELEASED_DATA_REFERENCE = {
+  impostorP1: 0.28,
+  impostorP5: 0.342,
+  impostorTrials: 27060,
+  genuineTrials: 165,
 };
 
 export const CELLS = PROMPTS.tasks.flatMap((task) =>
@@ -126,6 +154,22 @@ function countsToObject(counts) {
   return Object.fromEntries([...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])));
 }
 
+/** Pick the modal answer from a distribution object, independent of key enumeration order. */
+export function topAnswerOf(distribution) {
+  let answer = null;
+  let count = -1;
+  let total = 0;
+  for (const [key, value] of Object.entries(distribution ?? {})) {
+    const n = Number(value);
+    total += n;
+    if (n > count || (n === count && (answer === null || key.localeCompare(answer) < 0))) {
+      answer = key;
+      count = n;
+    }
+  }
+  return { topAnswer: answer, topShare: total > 0 ? Number((count / total).toFixed(4)) : 0 };
+}
+
 function sumCounts(counts) {
   let total = 0;
   for (const value of counts.values()) total += value;
@@ -175,7 +219,8 @@ export function buildFingerprint(meta, records) {
   let included = 0;
   let reasoningLeak = 0;
 
-  for (const cellId of meta.cells) {
+  const cellIds = [...new Set(meta.cells)];
+  for (const cellId of cellIds) {
     const cell = cellById(cellId);
     if (!cell) continue;
     const rs = records.filter((record) => record.cell === cellId);
@@ -185,8 +230,7 @@ export function buildFingerprint(meta, records) {
     reasoningLeak += rs.filter((record) => record.answerClass === 'post_reasoning').length;
     const counts = countsOf(rs);
     const distribution = countsToObject(counts);
-    const topAnswer = Object.keys(distribution)[0] ?? null;
-    const topShare = topAnswer == null ? 0 : distribution[topAnswer] / (valid || 1);
+    const { topAnswer, topShare } = topAnswerOf(distribution);
     const isIncluded = valid >= 10;
     if (isIncluded) included += 1;
     cells[cellId] = {
@@ -207,7 +251,7 @@ export function buildFingerprint(meta, records) {
 
   let splitSum = 0;
   let splitCells = 0;
-  for (const cellId of meta.cells) {
+  for (const cellId of cellIds) {
     const rs = records.filter((record) => record.cell === cellId);
     const even = countsOf(rs.filter((record) => record.rep % 2 === 0));
     const odd = countsOf(rs.filter((record) => record.rep % 2 === 1));
@@ -221,7 +265,6 @@ export function buildFingerprint(meta, records) {
   const total = records.length;
   const validRate = total === 0 ? 0 : validTotal / total;
   const warnings = [];
-  if (validRate < 0.8) warnings.push(`valid rate ${(validRate * 100).toFixed(1)}% is below 80%; fingerprint reliability is limited`);
   if (reasoningLeak > 0) warnings.push(`${reasoningLeak} responses carried a reasoning trace; the paper protocol requires reasoning disabled`);
   if (included < 40) warnings.push(`${included}/40 cells reached >=10 valid samples; comparisons use fewer cells`);
 
@@ -233,10 +276,11 @@ export function buildFingerprint(meta, records) {
     completedAt: meta.completedAt ?? null,
     promptVersion: meta.promptVersion,
     reps: meta.reps,
-    tau: TAU,
-    thresholdSource: 'paper full-battery EER, recomputed from released split-scores.json',
+    cutoff: CUTOFF,
+    cutoffSource: 'released split-half impostor 1st percentile; about 1% false accepts and 18% false rejects',
     paperReference: PAPER_REFERENCE,
-    cellCount: meta.cells.length,
+    releasedDataReference: RELEASED_DATA_REFERENCE,
+    cellCount: cellIds.length,
     cellsIncluded: included,
     validRate: Number(validRate.toFixed(4)),
     totals: {
@@ -282,23 +326,42 @@ export function compareFingerprints(a, b) {
   details.sort((x, y) => y.jsd - x.jsd);
   const cellsUsed = details.length;
   const score = cellsUsed === 0 ? null : Number((sum / cellsUsed).toFixed(4));
-  const verdict = score == null ? 'insufficient_samples' : score <= TAU ? 'consistent' : 'inconsistent';
+  const repsA = Number.isInteger(a.reps) ? a.reps : null;
+  const repsB = Number.isInteger(b.reps) ? b.reps : null;
+  const coverage = {
+    cellsUsed,
+    cellsRequired: REQUIRED_CELLS,
+    repsA,
+    repsB,
+    repsRequired: REQUIRED_REPS,
+  };
+  const eligible = score != null && cellsUsed === REQUIRED_CELLS && repsA === REQUIRED_REPS && repsB === REQUIRED_REPS;
+  const verdict = !eligible
+    ? 'insufficient_evidence'
+    : score <= CUTOFF ? 'consistent' : 'inconsistent';
+  const verdictReason = eligible
+    ? null
+    : score == null ? 'no_cells'
+      : cellsUsed !== REQUIRED_CELLS ? 'partial_battery'
+        : 'repetitions';
   const relation = a.provider === b.provider && a.model === b.model ? 'same_target' : 'different_target';
   const warnings = [];
   if (cellsUsed < Math.min(a.cellCount ?? 0, b.cellCount ?? 0)) warnings.push(`only ${cellsUsed} cells had >=10 valid samples on both sides`);
-  if ((a.validRate ?? 0) < 0.8 || (b.validRate ?? 0) < 0.8) warnings.push('one checkpoint has valid rate below 80%');
-  if ((a.splitHalf?.score ?? 0) > 0.3 || (b.splitHalf?.score ?? 0) > 0.3) warnings.push('split-half genuine score is high; measurement noise may be large');
-  if (score != null && Math.abs(score - TAU) < 0.03) warnings.push('score is close to tau; treat the verdict with caution');
+  if (cellsUsed !== REQUIRED_CELLS) warnings.push(`comparison covers ${cellsUsed}/${REQUIRED_CELLS} cells; the cutoff needs the full battery, so no verdict is given`);
+  if (repsA !== REQUIRED_REPS || repsB !== REQUIRED_REPS) warnings.push(`repetitions per cell are A ${repsA ?? '—'} / B ${repsB ?? '—'}; the cutoff needs ${REQUIRED_REPS}, so no verdict is given`);
 
   return {
     score,
-    tau: TAU,
+    cutoff: CUTOFF,
     verdict,
+    verdictReason,
+    coverage,
     relation,
     cellsUsed,
     genuineA: a.splitHalf?.score ?? null,
     genuineB: b.splitHalf?.score ?? null,
     paperReference: PAPER_REFERENCE,
+    releasedDataReference: RELEASED_DATA_REFERENCE,
     warnings,
     details,
   };

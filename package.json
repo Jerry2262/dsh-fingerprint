@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-llm-fingerprint",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Paper-protocol fingerprint records and comparison panel for configured DSH provider/model routes.",
@@ -34,12 +34,14 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
+    "docs",
     "README.md",
     "LICENSE",
     "NOTICE.md"
   ],
   "scripts": {
-    "check": "node --check index.js && node --check core.js && node --check client.js"
+    "check": "node --check index.js && node --check core.js && node --check client.js",
+    "test": "node --test test/core.test.js"
   },
   "dsh": {
     "bundle": {

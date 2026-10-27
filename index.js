@@ -4,7 +4,7 @@
  * A fingerprint record is one paper-protocol capture of one provider/model
  * route at one time: 40 cells x 30 repetitions by default. The fingerprint is
  * the per-cell empirical answer distribution. Any two records compare with the
- * same operation and the same paper threshold.
+ * same operation and the same decision cutoff.
  *
  * The same service methods serve three callers: agent tools, the web API used
  * by the panel, and the panel's polling reads. There is one implementation of
@@ -26,14 +26,16 @@ import path from 'node:path';
 
 import {
   CELLS,
+  CUTOFF,
   PAPER_REFERENCE,
   PROMPTS,
-  TAU,
+  RELEASED_DATA_REFERENCE,
   allCellIds,
   buildFingerprint,
   cellById,
   compareFingerprints,
   normalizeAnswer,
+  topAnswerOf,
 } from './core.js';
 
 export const inject = ['llm', 'tools', 'webServer'];
@@ -135,32 +137,34 @@ async function pool(items, limit, worker) {
   await Promise.all(workers);
 }
 
-function chooseReasoningEffort(info, requested) {
+/** Effort ids that mean the model answers without reasoning. `minimal` still reasons, so it is not one. */
+const DISABLED_EFFORTS = ['off', 'none', 'disabled'];
+
+function effortIsDisabled(effort) {
+  return effort != null && DISABLED_EFFORTS.includes(String(effort).toLowerCase());
+}
+
+function chooseReasoningEffort(info, requested, { requireDisabled = false } = {}) {
   const efforts = info?.reasoning?.efforts ?? [];
   const ids = efforts.map((effort) => String(effort.id));
   if (requested) {
     if (!ids.includes(requested)) {
       throw new Error(`reasoningEffort "${requested}" is not available; available: ${ids.join(', ') || '(none)'}`);
     }
+    if (requireDisabled && !effortIsDisabled(requested)) {
+      throw new Error(`the paper protocol requires reasoning disabled; reasoningEffort "${requested}" cannot be used for a capture. Use off/none/disabled.`);
+    }
     return requested;
   }
-  const off = efforts.find((effort) => {
-    const id = String(effort.id ?? '').toLowerCase();
-    const name = String(effort.name ?? '').toLowerCase();
-    return ['off', 'none', 'disabled', 'minimal'].includes(id) || ['off', 'none', 'disabled'].includes(name);
-  });
-  return off ? String(off.id) : (efforts[0] ? String(efforts[0].id) : null);
-}
-
-function effortIsDisabled(effort) {
-  return effort != null && ['off', 'none', 'disabled'].includes(String(effort).toLowerCase());
+  const off = efforts.find((effort) => effortIsDisabled(effort.id));
+  if (off) return String(off.id);
+  return requireDisabled ? null : (efforts[0] ? String(efforts[0].id) : null);
 }
 
 /** Paper protocol needs a direct single-pass completion; a reasoning model without off cannot provide one. */
 function supportsPaperProtocol(info) {
   if (!info?.reasoning) return true;
-  const efforts = info.reasoning.efforts ?? [];
-  return efforts.some((effort) => ['off', 'none', 'disabled'].includes(String(effort.id).toLowerCase()));
+  return (info.reasoning.efforts ?? []).some((effort) => effortIsDisabled(effort.id));
 }
 
 async function providerInfo(ctx, provider) {
@@ -175,6 +179,27 @@ async function providerInfo(ctx, provider) {
 async function modelInfo(ctx, provider, model) {
   await providerInfo(ctx, provider);
   return ctx.llm.resolveModelInfo(provider, model);
+}
+
+const COMPARABLE_REASONING_POLICIES = new Set(['disabled', 'none']);
+
+/**
+ * Fingerprints only compare inside one measurement protocol: the same prompt
+ * battery and reasoning actually disabled. Returns the refusal message, or null.
+ */
+export function comparabilityError(metaA, metaB) {
+  const versionA = metaA?.promptVersion ?? null;
+  const versionB = metaB?.promptVersion ?? null;
+  if (versionA !== versionB) {
+    return `records use different prompt versions (${versionA ?? 'unknown'} vs ${versionB ?? 'unknown'}); fingerprints from different prompt batteries are not comparable`;
+  }
+  for (const [label, meta] of [['A', metaA], ['B', metaB]]) {
+    const policy = meta?.reasoningPolicy ?? null;
+    if (policy !== null && !COMPARABLE_REASONING_POLICIES.has(policy)) {
+      return `record ${label} was captured with reasoning policy "${policy}"; only records with reasoning disabled are comparable`;
+    }
+  }
+  return null;
 }
 
 function adapterMetadata(info) {
@@ -256,14 +281,14 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function withRetry(fn, attempts = 3) {
+async function withRetry(fn, attempts = 3, aborted = () => false) {
   let last;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       return await fn();
     } catch (error) {
       last = error;
-      if (attempt === attempts - 1 || !retryable(error)) throw error;
+      if (aborted() || attempt === attempts - 1 || !retryable(error)) throw error;
       await sleep(Math.min(30_000, 2000 * 2 ** attempt));
     }
   }
@@ -285,6 +310,7 @@ async function runOne(ctx, meta, cellId, rep, reasoningEffort, signal) {
       reasoningEffort,
     }, signal),
     3,
+    () => signal?.aborted === true,
   );
   const normalized = normalizeAnswer(result.text, cell.task, cell.lang);
   const reasoningLeak = result.reasoning.length > 0 || Number(result.usage?.reasoningTokens ?? 0) > 0;
@@ -309,7 +335,7 @@ async function runOne(ctx, meta, cellId, rep, reasoningEffort, signal) {
   };
 }
 
-async function runCheckpoint(ctx, root, meta, reasoningEffort) {
+async function runCheckpoint(ctx, root, meta, reasoningEffort, signal) {
   const paths = checkpointPaths(root, meta.id);
   mkdirSync(paths.dir, { recursive: true });
   ensureTrailingNewline(paths.responses);
@@ -333,15 +359,19 @@ async function runCheckpoint(ctx, root, meta, reasoningEffort) {
   let attempted = completed;
   let fatalRequestError = null;
   await pool(pending, CONCURRENCY, async ({ cellId, rep }) => {
-    if (fatalRequestError) return;
+    if (fatalRequestError || signal?.aborted) return;
     try {
-      const record = await runOne(ctx, meta, cellId, rep, reasoningEffort);
+      const record = await runOne(ctx, meta, cellId, rep, reasoningEffort, signal);
       appendFileSync(paths.responses, `${JSON.stringify(record)}\n`);
       completed += 1;
       meta.completedRequests = completed;
       addUsage(meta.usage, record.usage);
       if (record.answerClass === 'post_reasoning') meta.reasoningLeakResponses += 1;
     } catch (error) {
+      if (signal?.aborted) {
+        fatalRequestError = 'capture was aborted because the plugin was unloaded; partial responses are kept';
+        return;
+      }
       if (/MissingSessionID/.test(String(error?.message ?? error))) {
         fatalRequestError = String(error?.message ?? error);
       }
@@ -362,6 +392,9 @@ async function runCheckpoint(ctx, root, meta, reasoningEffort) {
   meta.completedAt = nowUtc();
   meta.completedRequests = completed;
   meta.usage = aggregateUsage(records);
+  if (!fatalRequestError && signal?.aborted) {
+    fatalRequestError = 'capture was aborted because the plugin was unloaded; partial responses are kept';
+  }
   if (fatalRequestError) {
     meta.status = 'failed';
     meta.fatalError = fatalRequestError;
@@ -385,8 +418,8 @@ async function runCheckpoint(ctx, root, meta, reasoningEffort) {
   writeMeta(paths.meta, meta);
 }
 
-function launchCheckpoint(ctx, root, meta, reasoningEffort) {
-  return runCheckpoint(ctx, root, meta, reasoningEffort).catch((error) => {
+function launchCheckpoint(ctx, root, meta, reasoningEffort, signal) {
+  return runCheckpoint(ctx, root, meta, reasoningEffort, signal).catch((error) => {
     const paths = checkpointPaths(root, meta.id);
     try {
       mkdirSync(paths.dir, { recursive: true });
@@ -398,6 +431,48 @@ function launchCheckpoint(ctx, root, meta, reasoningEffort) {
       // The runner error is already reflected in the tool result path.
     }
   });
+}
+
+/**
+ * A record still marked queued/running has no runner in this process: either the
+ * host restarted or the plugin was unloaded mid-capture. Mark it failed, keep the
+ * partial responses, and make it deletable instead of leaving it running forever.
+ */
+function recoverInterruptedRecords(root) {
+  const dir = path.join(root, 'checkpoints');
+  if (!existsSync(dir)) return 0;
+  let recovered = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const paths = checkpointPaths(root, entry.name);
+    if (!existsSync(paths.meta)) continue;
+    let meta;
+    try {
+      meta = readJson(paths.meta);
+    } catch {
+      continue;
+    }
+    if (!['queued', 'running'].includes(meta.status)) continue;
+    const records = readJsonl(paths.responses);
+    meta.status = 'failed';
+    meta.completedAt = meta.completedAt ?? nowUtc();
+    meta.fatalError = 'capture was interrupted by a host restart or plugin unload; partial responses are kept';
+    if (records.length > 0) {
+      try {
+        const fingerprint = buildFingerprint(meta, records);
+        meta.cellsIncluded = fingerprint.cellsIncluded;
+        meta.validRate = fingerprint.validRate;
+        meta.splitHalfScore = fingerprint.splitHalf.score;
+        meta.warnings = [...new Set([...(meta.warnings ?? []), ...fingerprint.warnings])];
+        writeFileSync(paths.fingerprint, `${JSON.stringify(fingerprint, null, 2)}\n`);
+      } catch {
+        // Keep the record deletable even when its partial data cannot be aggregated.
+      }
+    }
+    writeMeta(paths.meta, meta);
+    recovered += 1;
+  }
+  return recovered;
 }
 
 function checkpointSummary(meta) {
@@ -443,7 +518,7 @@ function listCheckpointSummaries(root) {
   return checkpoints;
 }
 
-function createService(ctx, root) {
+function createService(ctx, root, lifetimeSignal) {
   const active = new Set();
 
   async function listTargets() {
@@ -496,7 +571,7 @@ function createService(ctx, root) {
     const info = await modelInfo(ctx, args.provider, args.model);
     const effort = chooseReasoningEffort(info, args.reasoningEffort);
     const requested = Array.isArray(args.cells) && args.cells.length > 0
-      ? args.cells
+      ? [...new Set(args.cells)]
       : ['num100-random:en', 'num100-random:zh'];
     for (const cellId of requested) {
       if (!cellById(cellId)) throw new Error(`unknown cell "${cellId}"`);
@@ -596,8 +671,11 @@ function createService(ctx, root) {
     if (!supportsPaperProtocol(info)) {
       throw new Error('this model cannot disable reasoning; the paper protocol needs a direct single-pass answer. Choose a model that advertises an off/none reasoning effort.');
     }
-    const effort = chooseReasoningEffort(info, args.reasoningEffort);
-    const cells = Array.isArray(args.cells) && args.cells.length > 0 ? args.cells : allCellIds();
+    const effort = chooseReasoningEffort(info, args.reasoningEffort, { requireDisabled: true });
+    if (info.reasoning && !effortIsDisabled(effort)) {
+      throw new Error('the paper protocol requires reasoning disabled; no off/none/disabled effort is available on this route.');
+    }
+    const cells = Array.isArray(args.cells) && args.cells.length > 0 ? [...new Set(args.cells)] : allCellIds();
     for (const cellId of cells) {
       if (!cellById(cellId)) throw new Error(`unknown cell "${cellId}"`);
     }
@@ -614,7 +692,7 @@ function createService(ctx, root) {
       createdAt: nowUtc(),
       status: 'queued',
       promptVersion: PROMPTS.version,
-      tau: TAU,
+      cutoff: CUTOFF,
       cells,
       reps,
       totalRequests: cells.length * reps,
@@ -632,7 +710,7 @@ function createService(ctx, root) {
     const paths = checkpointPaths(root, id);
     mkdirSync(paths.dir, { recursive: true });
     writeMeta(paths.meta, meta);
-    const task = launchCheckpoint(ctx, root, meta, effort);
+    const task = launchCheckpoint(ctx, root, meta, effort, lifetimeSignal);
     active.add(id);
     task.finally(() => active.delete(id)).catch(() => {});
     return {
@@ -660,19 +738,34 @@ function createService(ctx, root) {
     const paths = checkpointPaths(root, checkpointId);
     if (!existsSync(paths.meta)) throw new Error(`unknown fingerprint record "${checkpointId}"`);
     const meta = readJson(paths.meta);
-    const result = { checkpoint: meta, fingerprint: null };
+    // Old records stored `tau` at capture time; the cutoff is a comparison-time
+    // policy, so the API reports the current one instead of a stale stamp.
+    const { tau: _legacyTau, ...checkpoint } = meta;
+    const result = {
+      checkpoint: { ...checkpoint, cutoff: CUTOFF },
+      cutoff: CUTOFF,
+      cutoffSource: 'released split-half impostor 1st percentile',
+      fingerprint: null,
+    };
     if (existsSync(paths.fingerprint)) {
       const fingerprint = readJson(paths.fingerprint);
+      const { tau: _legacyFingerprintTau, ...rest } = fingerprint;
       result.fingerprint = {
-        cellCount: fingerprint.cellCount,
-        cellsIncluded: fingerprint.cellsIncluded,
-        validRate: fingerprint.validRate,
-        splitHalf: fingerprint.splitHalf,
-        totals: fingerprint.totals,
-        tau: fingerprint.tau,
-        paperReference: fingerprint.paperReference,
-        warnings: fingerprint.warnings,
-        cells: Object.entries(fingerprint.cells ?? {}).map(([cell, value]) => ({ cell, ...value })),
+        cellCount: rest.cellCount,
+        cellsIncluded: rest.cellsIncluded,
+        validRate: rest.validRate,
+        splitHalf: rest.splitHalf,
+        totals: rest.totals,
+        cutoff: CUTOFF,
+        cutoffSource: result.cutoffSource,
+        paperReference: PAPER_REFERENCE,
+        releasedDataReference: RELEASED_DATA_REFERENCE,
+        warnings: rest.warnings,
+        cells: Object.entries(rest.cells ?? {}).map(([cell, value]) => ({
+          cell,
+          ...value,
+          ...topAnswerOf(value.distribution),
+        })),
       };
     }
     return result;
@@ -688,7 +781,14 @@ function createService(ctx, root) {
     if (!existsSync(pathsB.fingerprint)) throw new Error(`record "${b}" has no completed fingerprint`);
     const fingerprintA = readJson(pathsA.fingerprint);
     const fingerprintB = readJson(pathsB.fingerprint);
-    return {
+    const metaA = readJson(pathsA.meta);
+    const metaB = readJson(pathsB.meta);
+    const blocker = comparabilityError(
+      { promptVersion: metaA.promptVersion ?? fingerprintA.promptVersion, reasoningPolicy: metaA.reasoningPolicy ?? null },
+      { promptVersion: metaB.promptVersion ?? fingerprintB.promptVersion, reasoningPolicy: metaB.reasoningPolicy ?? null },
+    );
+    if (blocker) throw new Error(blocker);
+    const result = {
       a: {
         id: fingerprintA.checkpointId,
         provider: fingerprintA.provider,
@@ -705,6 +805,12 @@ function createService(ctx, root) {
       },
       ...compareFingerprints(fingerprintA, fingerprintB),
     };
+    const sessionA = metaA.request?.sessionPolicy ?? null;
+    const sessionB = metaB.request?.sessionPolicy ?? null;
+    if (sessionA !== sessionB) {
+      result.warnings = [...result.warnings, `session policy differs (A ${sessionA ?? 'unrecorded'} / B ${sessionB ?? 'unrecorded'}); routing or caching may differ`];
+    }
+    return result;
   }
 
   async function deleteCheckpoint(recordId) {
@@ -758,7 +864,7 @@ function toolDefinitions(service) {
     },
     {
       name: 'llm_fingerprint_capture',
-      description: 'Start one paper-protocol fingerprint capture in the background and return immediately. One record is one fingerprint of one provider/model at one time: 40 cells x 30 repetitions by default. Refuses models that cannot disable reasoning (paperCompatible=false). Poll llm_fingerprint_get_record for progress and the split-half genuine score. Compare any two completed records with llm_fingerprint_compare.',
+      description: 'Start one paper-protocol fingerprint capture in the background and return immediately. One record is one fingerprint of one provider/model at one time: 40 cells x 30 repetitions by default. Refuses models that cannot disable reasoning (paperCompatible=false) and rejects an explicit non-off reasoningEffort. Poll llm_fingerprint_get_record for progress and the split-half consistency. Compare any two completed records with llm_fingerprint_compare.',
       parameters: {
         type: 'object',
         properties: {
@@ -776,7 +882,7 @@ function toolDefinitions(service) {
     },
     {
       name: 'llm_fingerprint_get_record',
-      description: 'Read one fingerprint record: status, request progress, valid rate, cells included, split-half genuine score, usage, and warnings. Use it to poll a capture started by llm_fingerprint_capture.',
+      description: 'Read one fingerprint record: status, request progress, valid rate, cells included, split-half consistency, usage, warnings, and the current comparison cutoff. Use it to poll a capture started by llm_fingerprint_capture.',
       parameters: {
         type: 'object',
         properties: {
@@ -790,7 +896,7 @@ function toolDefinitions(service) {
     },
     {
       name: 'llm_fingerprint_compare',
-      description: 'Compare any two completed fingerprint records with the paper protocol. score is the mean base-2 JSD over cells with >=10 valid samples on both sides; tau is 0.356 from the paper full-battery EER. verdict is consistent (score <= tau), inconsistent (score > tau), or insufficient_samples. The same operation covers two models and one provider/model before and after; relation says which.',
+      description: 'Compare any two completed fingerprint records. score is the mean base-2 JSD over cells with >=10 valid samples on both sides; the cutoff is 0.280, the 1st percentile of different-model distances in the released trials (about 1% of different models fall below it). verdict is consistent (score <= cutoff) or inconsistent (score > cutoff) only when all 40 cells qualify and both records used 30 repetitions per cell; otherwise it is insufficient_evidence and verdictReason says why. Records captured with a different prompt version or with reasoning not disabled are refused. relation reports whether both records share a target.',
       parameters: {
         type: 'object',
         properties: {
@@ -845,7 +951,27 @@ async function readRequestBody(req) {
   }
 }
 
-async function handleApi(req, res, service) {
+/**
+ * Authenticate one HTTP API request with the Harness Connection fence.
+ * The same check the official Web routes use: Host/Origin/Sec-Fetch-Site plus a
+ * live signed browser session or API peer. Returns true when the response is owned.
+ */
+function rejectUnauthenticated(ctx, req, res) {
+  const connection = ctx.get('connection');
+  if (!connection) {
+    sendJson(res, 503, { error: 'web connection authentication is unavailable; the fingerprint HTTP API is disabled' });
+    return true;
+  }
+  const rejection = connection.requestRejection(req);
+  if (rejection === undefined) return false;
+  res.statusCode = rejection;
+  res.setHeader('Cache-Control', 'no-store');
+  res.end();
+  return true;
+}
+
+async function handleApi(ctx, req, res, service) {
+  if (rejectUnauthenticated(ctx, req, res)) return;
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
     res.end();
@@ -895,7 +1021,10 @@ export function apply(ctx, config = {}) {
   mkdirSync(path.join(root, 'checkpoints'), { recursive: true });
   mkdirSync(path.join(root, 'probes'), { recursive: true });
 
-  const service = createService(ctx, root);
+  recoverInterruptedRecords(root);
+  const lifetime = new AbortController();
+  ctx.effect(() => () => { lifetime.abort(); }, 'llm-fingerprint: abort running captures');
+  const service = createService(ctx, root, lifetime.signal);
   for (const definition of toolDefinitions(service)) {
     ctx.effect(() => ctx.tools.register(definition), `llm-fingerprint: ${definition.name}`);
   }
@@ -903,7 +1032,7 @@ export function apply(ctx, config = {}) {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: API_PREFIX,
-      handler: (req, res) => handleApi(req, res, service),
+      handler: (req, res) => handleApi(ctx, req, res, service),
     }),
     'llm-fingerprint: http api',
   );

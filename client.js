@@ -36,19 +36,16 @@ window.__ModuleLoader__.load({
       details: 'Details',
       close: 'Close',
       compareTitle: 'Compare records',
-      modeCross: 'Different targets',
-      modeTemporal: 'Same target, before/after',
-      crossHint: 'Pick any two completed fingerprint records. The result labels whether they share a target.',
-      temporalHint: 'Pick two captures of the same provider/model to see whether it changed.',
+      crossHint: 'Pick any two completed fingerprint records. The operation is the same; the result labels whether they share a target.',
       checkpointA: 'Record A',
       checkpointB: 'Record B',
       selectTwo: 'Select two different completed records.',
-      score: 'Mean JSD',
-      tau: 'Threshold τ',
+      score: 'Difference score (lower = closer)',
+      cutoff: 'Cutoff',
       verdict: 'Verdict',
-      verdictConsistent: 'Consistent',
-      verdictInconsistent: 'Inconsistent',
-      verdictInsufficient: 'Insufficient evidence',
+      verdictConsistent: 'Looks like the same model',
+      verdictInconsistent: 'Looks like a different model',
+      verdictInsufficient: 'Not enough evidence',
       relation: 'Relation',
       relationSame: 'Same target',
       relationDifferent: 'Different target',
@@ -77,21 +74,25 @@ window.__ModuleLoader__.load({
       noCompleted: 'No completed fingerprint records yet.',
       loading: 'Loading…',
       comparing: 'Comparing…',
-      resultCaveat: 'Lower scores mean closer answer distributions. A score at or below τ means no clear difference was found, not proof that it is the same model.',
+      resultCaveat: 'Lower means the two sides are closer. Below the cutoff only means the difference is small, not that it is certainly the same model.',
       terminologyHint: 'A cell is one task × one language. Lower JSD means closer distributions; split-half JSD is internal consistency within one record.',
       defaultRepsHint: 'Paper protocol default 30; UI minimum 10.',
       errorNoReasoning: 'This model cannot disable reasoning and cannot be captured with the paper protocol.',
       errorStillRunning: 'The record is still running; wait for it to finish before deleting.',
       errorRecordNotFound: 'The record no longer exists.',
       errorRecordNeedsFingerprint: 'This record has no completed fingerprint.',
+      errorPromptVersionMismatch: 'These records use different prompt versions, so they cannot be compared.',
+      errorReasoningPolicyMismatch: 'One record was captured without reasoning disabled, so it cannot be compared.',
       warningFewCells: 'Some cells had fewer than 10 valid samples on both sides; this comparison uses fewer cells.',
-      warningLowValidRate: "One record's valid-answer rate is below 80%; reliability is limited.",
-      warningNoisy: 'Split-half consistency is low; measurement noise may be large.',
-      warningNearTau: 'The score is close to τ; treat the verdict with caution.',
       warningReasoning: 'Some responses carried a reasoning trace; the paper protocol requires it disabled.',
       warningCellsIncluded: 'Some cells did not reach 10 valid samples and were excluded.',
+      warningSessionPolicy: 'The two records used different session policies; provider routing or caching may differ.',
+      warningFullBatteryNeeded: 'The comparison does not cover the full 40-cell battery; no verdict is given.',
+      warningRepsNeeded: 'Repetitions per cell are not 30; no verdict is given.',
+      verdictNoCells: 'Cannot judge: the two records share no cell with enough valid samples on both sides.',
+      verdictPartialBattery: 'Cannot judge: only {cells}/40 cells qualify; the cutoff needs the full 40-cell battery.',
+      verdictRepetitions: 'Cannot judge: repetitions per cell are A {a} / B {b}; the cutoff needs 30.',
       protocol: 'Protocol',
-      paper: 'Paper full-battery EER 7.3%',
       createdAt: 'Created',
       target: 'Target',
       progress: 'Progress',
@@ -114,6 +115,11 @@ window.__ModuleLoader__.load({
       deleted: 'Record deleted:',
       deleteRunning: 'This record is still running; wait for it to finish before deleting.',
       recordId: 'Record ID',
+      failureReason: 'Failure reason',
+      paperReference: 'Paper reference',
+      referenceValidity: 'valid rate 97.6% overall, per-model median 99.6%',
+      referenceSplitHalf: 'split-half JSD 0.140 for the same model, 0.463 for different models',
+      referenceScore: 'The cutoff is 0.280, the 1st percentile of different-model distances: in 100 different models, about 1 would still look the same.',
     };
 
     const zh = {
@@ -144,19 +150,16 @@ window.__ModuleLoader__.load({
       details: '详情',
       close: '关闭',
       compareTitle: '对比记录',
-      modeCross: '跨目标对比',
-      modeTemporal: '同目标前后对比',
-      crossHint: '任选两条已完成的指纹记录；结果会标注它们是否同一目标。',
-      temporalHint: '选同一服务商/模型的两次采集，观察它有没有变化。',
+      crossHint: '任选两条已完成的指纹记录。比较方式相同，结果会标注它们是否同一目标。',
       checkpointA: '记录 A',
       checkpointB: '记录 B',
       selectTwo: '请选择两条不同的已完成记录。',
-      score: '平均 JSD',
-      tau: '判定阈值 τ',
+      score: '差异分数（越低越像）',
+      cutoff: '判定线',
       verdict: '结论',
-      verdictConsistent: '一致',
-      verdictInconsistent: '不一致',
-      verdictInsufficient: '证据不足',
+      verdictConsistent: '看起来是同一个模型',
+      verdictInconsistent: '看起来不是同一个模型',
+      verdictInsufficient: '证据不足，无法判断',
       relation: '关系',
       relationSame: '同一目标',
       relationDifferent: '不同目标',
@@ -185,21 +188,25 @@ window.__ModuleLoader__.load({
       noCompleted: '还没有已完成的指纹记录。',
       loading: '加载中…',
       comparing: '对比中…',
-      resultCaveat: '分数越低表示答案分布越接近；≤ τ 只说明没有发现明显差异，不等于证明是同一个模型。',
+      resultCaveat: '分数越低，两边越像。低于判定线只说明差异小，不等于 100% 是同一个模型。',
       terminologyHint: 'cell 是一个任务 × 一种语言；JSD 越低表示答案分布越接近；分半 JSD 是同一条记录内部的一致性。',
       defaultRepsHint: '论文协议默认 30 次；UI 最低 10 次。',
       errorNoReasoning: '该模型不支持关闭推理，不能用论文协议采集。',
       errorStillRunning: '记录还在运行，请等它结束后再删除。',
       errorRecordNotFound: '记录已不存在。',
       errorRecordNeedsFingerprint: '该记录还没有完成的指纹。',
+      errorPromptVersionMismatch: '两条记录使用的提示词版本不同，无法比较。',
+      errorReasoningPolicyMismatch: '有记录采集时没有关闭推理，无法比较。',
       warningFewCells: '部分 cell 在两侧都没有达到 10 个有效样本，本次比较使用的 cell 较少。',
-      warningLowValidRate: '有一条记录的有效回答率低于 80%，可靠性有限。',
-      warningNoisy: '分半一致性偏低，测量噪声可能较大。',
-      warningNearTau: '分数接近 τ，请谨慎解读结论。',
       warningReasoning: '部分响应带有 reasoning trace；论文协议要求关闭推理。',
       warningCellsIncluded: '部分 cell 未达到 10 个有效样本，已被排除。',
+      warningSessionPolicy: '两条记录的会话标识策略不同，服务商路由或缓存行为可能不同。',
+      warningFullBatteryNeeded: '本次比较没有覆盖完整的 40 个 cell，因此不给结论。',
+      warningRepsNeeded: '每 cell 重复次数不是 30，因此不给结论。',
+      verdictNoCells: '无法判断：两条记录没有共同且样本足够的 cell。',
+      verdictPartialBattery: '无法判断：只有 {cells}/40 个 cell 可用，判定线需要完整 40 个 cell。',
+      verdictRepetitions: '无法判断：每 cell 重复次数是 A {a} / B {b}，判定线对应 30 次。',
       protocol: '协议',
-      paper: '论文 full battery EER 7.3%',
       createdAt: '创建时间',
       target: '目标',
       progress: '进度',
@@ -222,6 +229,11 @@ window.__ModuleLoader__.load({
       deleted: '记录已删除：',
       deleteRunning: '这条记录还在运行，请等它结束后再删除。',
       recordId: '记录 ID',
+      failureReason: '失败原因',
+      paperReference: '论文参考',
+      referenceValidity: '有效率总体 97.6%，模型内中位 99.6%',
+      referenceSplitHalf: '同一模型的分半差异通常 0.140，不同模型通常 0.463',
+      referenceScore: '判定线是 0.280，取自不同模型距离的 1% 分位：100 个不同模型里，大约只有 1 个会被看成相同。',
     };
 
     async function api(path, init) {
@@ -278,17 +290,20 @@ window.__ModuleLoader__.load({
     function friendlyWarning(message, t) {
       const text = String(message ?? '');
       if (/only \d+ cells|fewer cells/i.test(text)) return t('warningFewCells');
-      if (/valid rate .*below 80%|valid rate below 80%/i.test(text)) return t('warningLowValidRate');
-      if (/split-half genuine score is high/i.test(text)) return t('warningNoisy');
-      if (/score is close to tau/i.test(text)) return t('warningNearTau');
+      if (/session policy differs/i.test(text)) return t('warningSessionPolicy');
       if (/reasoning trace/i.test(text)) return t('warningReasoning');
       if (/cells reached >=10 valid samples/i.test(text)) return t('warningCellsIncluded');
+      if (/session policy differs/i.test(text)) return t('warningSessionPolicy');
+      if (/cutoff needs the full battery/i.test(text)) return t('warningFullBatteryNeeded');
+      if (/cutoff needs 30/i.test(text)) return t('warningRepsNeeded');
       return text;
     }
 
     function friendlyError(message, t) {
       const text = String(message ?? '');
       if (/cannot disable reasoning/i.test(text)) return t('errorNoReasoning');
+      if (/different prompt versions/i.test(text)) return t('errorPromptVersionMismatch');
+      if (/reasoning policy .*only records with reasoning disabled/i.test(text)) return t('errorReasoningPolicyMismatch');
       if (/still running/i.test(text)) return t('errorStillRunning');
       if (/unknown fingerprint record/i.test(text)) return t('errorRecordNotFound');
       if (/no completed fingerprint|two record ids|record id is required/i.test(text)) return t('errorRecordNeedsFingerprint');
@@ -315,6 +330,28 @@ window.__ModuleLoader__.load({
       if (verdict === 'consistent') return 'verdictConsistent';
       if (verdict === 'inconsistent') return 'verdictInconsistent';
       return 'verdictInsufficient';
+    }
+
+    /** The verdict line already states coverage and repetition problems; do not repeat them as warnings. */
+    function visibleWarnings(comparison) {
+      return (comparison.warnings || []).filter((item) => {
+        if (comparison.verdictReason === 'partial_battery' && /full battery/i.test(item)) return false;
+        if (comparison.verdictReason === 'repetitions' && /threshold needs 30/i.test(item)) return false;
+        return true;
+      });
+    }
+
+    function verdictExplanation(comparison, t) {
+      const coverage = comparison.coverage || {};
+      if (comparison.verdictReason === 'repetitions') {
+        return t('verdictRepetitions')
+          .replace('{a}', coverage.repsA ?? '—')
+          .replace('{b}', coverage.repsB ?? '—');
+      }
+      if (comparison.verdictReason === 'partial_battery') {
+        return t('verdictPartialBattery').replace('{cells}', coverage.cellsUsed ?? comparison.cellsUsed ?? '—');
+      }
+      return t('verdictNoCells');
     }
 
     const S = {
@@ -543,21 +580,6 @@ window.__ModuleLoader__.load({
       },
       statLabel: { fontSize: '11px', color: 'var(--dsw-alias-label-secondary)' },
       statValue: { fontSize: '16px', fontWeight: 700, marginTop: '2px' },
-      tabs: { display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap' },
-      tab: {
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'transparent',
-        color: 'var(--dsw-alias-label-secondary)',
-        borderRadius: '999px',
-        padding: '5px 12px',
-        fontSize: '12px',
-        cursor: 'pointer',
-      },
-      tabActive: {
-        borderColor: 'var(--dsw-alias-brand-primary)',
-        color: 'var(--dsw-alias-brand-primary)',
-        background: 'transparent',
-      },
       score: { fontSize: '34px', fontWeight: 750, letterSpacing: '-0.02em', lineHeight: 1.1 },
       mono: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '11px' },
       row: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
@@ -677,7 +699,6 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('');
       const [warning, setWarning] = useState('');
       const [notice, setNotice] = useState('');
-      const [mode, setMode] = useState('cross');
       const [a, setA] = useState('');
       const [b, setB] = useState('');
       const [comparison, setComparison] = useState(null);
@@ -763,16 +784,12 @@ window.__ModuleLoader__.load({
         [models, modelId],
       );
       const efforts = model ? (model.efforts || []) : [];
-      const hasOff = efforts.some((entry) => ['off', 'none', 'disabled'].includes(String(entry.id).toLowerCase()));
       const compatibleModels = models.filter((entry) => entry.paperCompatible !== false);
       const hasIncompatible = models.some((entry) => entry.paperCompatible === false);
       const noCompatibleModels = models.length > 0 && compatibleModels.length === 0;
       const modelCompatible = model ? model.paperCompatible !== false : false;
       const completed = checkpoints.filter((entry) => entry.status === 'completed' || entry.status === 'completed_with_failures');
-      const selectedA = completed.find((entry) => entry.id === a) || null;
-      const bOptions = mode === 'temporal' && selectedA
-        ? completed.filter((entry) => entry.id !== a && entry.provider === selectedA.provider && entry.model === selectedA.model)
-        : completed.filter((entry) => entry.id !== a);
+      const bOptions = completed.filter((entry) => entry.id !== a);
 
       function changeProvider(next) {
         const nextProvider = targets.find((entry) => entry.id === next) || null;
@@ -782,14 +799,6 @@ window.__ModuleLoader__.load({
         setModelId(nextModel ? nextModel.id : '');
         setWarning('');
         setNotice('');
-      }
-
-      function changeMode(next) {
-        setMode(next);
-        setA('');
-        setB('');
-        setComparison(null);
-        setShowAllCells(false);
       }
 
       async function start() {
@@ -1056,17 +1065,7 @@ window.__ModuleLoader__.load({
           ),
 
           h(Section, { title: t('compareTitle') },
-            h('div', { style: S.tabs },
-              h('button', {
-                style: { ...S.tab, ...(mode === 'cross' ? S.tabActive : {}) },
-                onClick: () => changeMode('cross'),
-              }, t('modeCross')),
-              h('button', {
-                style: { ...S.tab, ...(mode === 'temporal' ? S.tabActive : {}) },
-                onClick: () => changeMode('temporal'),
-              }, t('modeTemporal')),
-            ),
-            h('p', { style: S.hint }, mode === 'temporal' ? t('temporalHint') : t('crossHint')),
+            h('p', { style: S.hint }, t('crossHint')),
             completed.length === 0 ? h(Empty, {}, t('noCompleted')) : h('div', { style: { display: 'grid', gridTemplateColumns: '1fr', gap: '12px', maxWidth: '720px' } },
               h(Field, { label: t('checkpointA') },
                 h('select', {
@@ -1107,8 +1106,8 @@ window.__ModuleLoader__.load({
                   h(Badge, { tone: comparison.verdict === 'consistent' ? 'success' : comparison.verdict === 'inconsistent' ? 'error' : 'warn' }, t(verdictKey(comparison.verdict))),
                 ),
                 h('div', {},
-                  h('div', { style: { ...S.label, textTransform: 'none' } }, t('tau')),
-                  h('div', { style: { fontSize: '18px', fontWeight: 650 } }, comparison.tau),
+                  h('div', { style: { ...S.label, textTransform: 'none' } }, t('cutoff')),
+                  h('div', { style: { fontSize: '18px', fontWeight: 650 } }, comparison.cutoff),
                 ),
                 h('div', {},
                   h('div', { style: S.label }, t('relation')),
@@ -1116,9 +1115,13 @@ window.__ModuleLoader__.load({
                 ),
               ),
               h('div', { style: S.muted }, `${comparison.a.provider}/${comparison.a.model} #${shortRecordId(comparison.a.id)} ↔ ${comparison.b.provider}/${comparison.b.model} #${shortRecordId(comparison.b.id)} · ${t('genuine')}: A ${fmtScore(comparison.genuineA)} / B ${fmtScore(comparison.genuineB)} · ${comparison.cellsUsed} ${t('cellsUnit')}`),
+              comparison.verdict === 'insufficient_evidence'
+                ? h('div', { style: { ...S.hint, color: 'var(--dsw-alias-state-warn-primary)' } }, verdictExplanation(comparison, t))
+                : null,
+              h('div', { style: S.hint }, t('referenceScore')),
               h('div', { style: S.hint }, t('resultCaveat')),
-              comparison.warnings && comparison.warnings.length > 0
-                ? h('ul', { style: S.list }, comparison.warnings.map((item, index) => h('li', { key: index }, friendlyWarning(item, t))))
+              visibleWarnings(comparison).length > 0
+                ? h('ul', { style: S.list }, visibleWarnings(comparison).map((item, index) => h('li', { key: index }, friendlyWarning(item, t))))
                 : null,
               h('div', { style: S.tableWrap },
                 h('table', { style: S.table },
@@ -1180,6 +1183,9 @@ window.__ModuleLoader__.load({
                 : null,
               h('div', { style: { ...S.mono, color: 'var(--dsw-alias-label-secondary)' } }, `${t('recordId')}: ${detail.checkpoint.id}`),
               h('div', { style: { ...S.mono, color: 'var(--dsw-alias-label-secondary)' } }, `${t('createdAt')}: ${fmtTime(detail.checkpoint.createdAt)}`),
+              detail.checkpoint.fatalError
+                ? h('div', { style: { ...S.mono, color: 'var(--dsw-alias-state-error-primary)', wordBreak: 'break-word' } }, `${t('failureReason')}: ${detail.checkpoint.fatalError}`)
+                : null,
               detail.checkpoint.warnings && detail.checkpoint.warnings.length > 0
                 ? h('ul', { style: S.list }, detail.checkpoint.warnings.map((item, index) => h('li', { key: index }, friendlyWarning(item, t))))
                 : null,
@@ -1191,6 +1197,7 @@ window.__ModuleLoader__.load({
                 h(Stat, { label: t('requestsLabel'), value: `${detail.checkpoint.completedRequests}/${detail.checkpoint.totalRequests}` }),
                 h(Stat, { label: t('effort'), value: detail.checkpoint.reasoningEffort || '—' }),
               ),
+              h('div', { style: S.hint }, `${t('paperReference')}: ${t('referenceValidity')}; ${t('referenceSplitHalf')}.`),
               detail.fingerprint && detail.fingerprint.cells
                 ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
                   h('div', { style: S.tableWrap },
