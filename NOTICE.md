@@ -11,4 +11,4 @@ The prompt battery (`prompts.json`, the ten paper-1 tasks and four system prompt
 - Code and prompts: <https://zenodo.org/records/21278793> (`config/prompts.json`), MIT license.
 - Data and published statistics: <https://zenodo.org/records/21278557>, CC-BY-4.0.
 
-Attribution: Tomáš Bruckner. The normalization code is a direct port of the released `stats/01-normalize.js`; the threshold `TAU = 0.356` is recomputed from the released full-battery split-score trials at the equal-error point.
+Attribution: Tomáš Bruckner. The normalization code is a direct port of the released `stats/01-normalize.js`. The decision cutoff `0.280` is the 1st percentile of different-model distances in the released full-battery split-score trials (about 1% false accepts); the paper's reported full-battery EER is 7.3%.
