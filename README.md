@@ -16,10 +16,12 @@ dsh-fingerprint 把 DSH 里已经配置好的 `provider/model` 路由当作审�
 
 插件不保存 provider API key；认证和请求路由由 DSH 的 `llm` 服务处理。无法关闭 reasoning 的模型会被硬拦截，因为论文协议需要一次直接的单次 completion。
 
+这是一个手动使用的插件：正常操作都在 Web 面板里完成，默认不向 agent 注册工具，因此不占用模型上下文。需要让 agent 驱动采集做调试或自动化时，在面板底部的“设置”里把 Agent 工具开关打开即可，即时生效，不需要改配置文件。
+
 ## 要求
 
-- 一个启用 Web GUI 的 DSH profile（需要 `llm`、`tools`、`webServer` 服务）。
-- DSH 0.2.1 系列：实测 `0.2.1-rc.2` 和 `0.2.1-rc.4`，`engines.dsh` 限定 `>=0.2.1-rc.2 <0.2.2-0`。
+- 一个启用 Web GUI 的 DSH profile（需要 `llm`、`webServer` 服务；开启 agent 工具时还需要 `tools`）。
+- DSH 0.2.1 系列：安装、面板、API 与端到端采集已在 `0.2.1-rc.2` 和 `0.2.1-rc.4` 上验证；面板的 Agent 工具开关和 settings API 在 `0.2.1-rc.5` 上实测。`engines.dsh` 限定 `>=0.2.1-rc.2 <0.2.2-0`。
 - 至少一个配置好的、能关闭 reasoning（`off` / `none`）或本身不推理的 provider/model。
 - Node.js（由 DSH 自带，无需单独安装）。
 
@@ -53,19 +55,7 @@ dsh plugin --profile web add github:Jerry2262/dsh-fingerprint
 4. 在“对比记录”里选两条记录，点“对比记录”。比较方式只有一种，结果会标注两边是否同一目标。
 5. 结果包含差异分数、判定线、结论、关系、cell 级差异和警告。低于判定线只说明差异小，不等于 100% 是同一个模型。
 6. 行内垃圾桶可以删除记录；删除前会二次确认。运行中的记录不能删除。
-
-## Agent 工具
-
-Host 服务同时暴露给 agent：
-
-- `llm_fingerprint_list_models`
-- `llm_fingerprint_probe`
-- `llm_fingerprint_capture`
-- `llm_fingerprint_get_record`
-- `llm_fingerprint_compare`
-- `llm_fingerprint_delete_record`
-
-UI 和工具调用同一个 Host 服务，不维护第二套逻辑。
+7. 面板底部的“设置”里有 Agent 工具开关，默认关闭。开启后把 6 个 `llm_fingerprint_*` 工具暴露给 agent（每个请求多约 4.3 KB 工具 schema），关闭后立即从后续请求里移除；选择保存在数据目录的 `settings.json`，删掉这个文件即回到默认关闭。
 
 ## 工作原理
 
@@ -79,6 +69,7 @@ UI 和工具调用同一个 Host 服务，不维护第二套逻辑。
 
 - 插件不保存 API key；key 留在 DSH 的 provider/credential 层。
 - 原始响应和指纹默认写到 `$DSH_HOME/llm-fingerprint/`，也可以由插件 row 的 `dataDir` 覆盖。
+- 面板设置（目前只有 Agent 工具开关）存在同一数据目录的 `settings.json`。
 - 删除记录会删除该目录下的 `meta.json`、`responses.jsonl` 和 `fingerprint.json`。
 - 无法关闭 reasoning 的模型不会被静默采集。
 
@@ -93,14 +84,14 @@ UI 和工具调用同一个 Host 服务，不维护第二套逻辑。
 
 ## 开发
 
-- `index.js`：Host plugin，`llm` / `webServer` service、agent tools、HTTP API。
+- `index.js`：Host plugin，`llm` / `webServer` service、HTTP API；面板开关开启时另注册 6 个 agent 工具。
 - `core.js`：协议常量、提示词 battery、归一化、JSD、指纹与对比。
 - `client.js`：Web 面板（`main` + `sidebar.panellist`）、详情抽屉、对比与删除确认。
 - `prompts.json`：论文 paper-1 的 10 个任务 × 4 种语言。
 - `locale/`：插件元数据和 UI 文案。
 - `docs/DESIGN.md`：设计细节。
 - `npm run check`：JS 语法检查（无构建步骤）。
-- `npm test`：核心回归测试（判定线、覆盖门槛、协议拒绝、重复 cell 与主要答案）。
+- `npm test`：核心与插件注册回归测试（判定线、覆盖门槛、协议拒绝、重复 cell、主要答案，以及 agent 工具默认关闭/开关注册）。
 
 ## 许可与来源
 

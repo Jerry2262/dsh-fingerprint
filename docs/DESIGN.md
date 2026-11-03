@@ -7,14 +7,15 @@
 - **审计目标**：DSH 已配置的一条 provider 路由 + 一个 model id。插件不维护自己的端点表，也不保存 API key。
 - **指纹记录**：对某个目标在某一时刻做一次完整采集的结果。记录本身就是指纹，包含 40 个 cell 的经验答案分布和派生统计。
 - **对比**：任意两条记录之间的同一个操作。跨模型、跨服务商、同一目标的前后两次，都是同一个比较操作，只有 `relation` 标签不同。
-- **单一实现**：Host service 是唯一操作层；agent 工具和 Web 面板都是调用方。
+- **单一实现**：Host service 是唯一操作层；Web 面板通过 HTTP API 调用，可选的 agent 工具调用同一组方法。
+- **默认手动**：插件默认不向 agent 注册工具，所有操作在面板里完成，因此不占用模型上下文；面板“设置”里的开关打开时才注册 6 个 agent 工具，选择持久化在数据目录的 `settings.json`。
 
 ## 2. 协议常量
 
 论文：Bruckner, *One Token Is Enough*，arXiv:2607.10252。
 
 - 10 个任务 × 4 种语言（en / ru / zh / ar）= 40 个 cell。
-- 每个 cell 默认 30 次重复；UI 最低 10，API/tool 允许更低用于诊断。
+- 每个 cell 默认 30 次重复；UI 最低 10，HTTP API 和可选的 agent 工具允许更低用于诊断。
 - `temperature=1.0`，`max_tokens=16`，每个 cell 使用对应语言的固定单词 system prompt。
 - reasoning 必须关闭；不能关闭的模型不进入采集。
 - 答案归一化：Unicode NFC、去标点/引号、case fold、阿拉伯-印度数字和中文数字映射、取首个词；每条响应归为 `valid` / `invalid` / `refusal` / `empty`，带 reasoning trace 的标为 `post_reasoning` 并从有效分布中排除。
@@ -36,6 +37,7 @@ llm-fingerprint/
     responses.jsonl    # 每条成功请求一行，append-only
     fingerprint.json   # 派生分布、valid rate、分半一致性、cell 明细
   probes/<probe-id>.json
+  settings.json        # 面板设置（目前只有 agent 工具开关）
 ```
 
 - 记录 id 形如 `cp-20261020T034450-59c80896`，服务端用严格格式校验，防止路径穿越。
@@ -48,18 +50,19 @@ llm-fingerprint/
 
 ## 4. Host 结构
 
-`index.js` 通过 `apply(ctx, config)` 注册：
+`index.js` 通过 `apply(ctx, config)` 注册一个 HTTP API，prefix `/llm-fingerprint/api`，供 Web 面板调用：
 
-- 六个 agent 工具：`llm_fingerprint_list_models`、`probe`、`capture`、`get_record`、`compare`、`delete_record`。
-- 一个 HTTP API，prefix `/llm-fingerprint/api`，供 Web 面板调用：
-  - `GET /targets`
-  - `GET /checkpoints`
-  - `POST /checkpoints`
-  - `GET /checkpoints/:id`
-  - `DELETE /checkpoints/:id`
-  - `POST /compare`
-  - `POST /probe`
-- 所有操作都在 `createService(ctx, root)` 返回的同一组方法里实现。
+- `GET /targets`
+- `GET /checkpoints`
+- `POST /checkpoints`
+- `GET /checkpoints/:id`
+- `DELETE /checkpoints/:id`
+- `POST /compare`
+- `POST /probe`
+- `GET /settings`
+- `POST /settings/tools`
+
+所有操作都在 `createService(ctx, root)` 返回的同一组方法里实现。面板“设置”里的 Agent 工具开关调用 `POST /settings/tools`：Host 按需通过 `ctx.inject(['tools'], ...)` 注册 6 个 agent 工具（`llm_fingerprint_list_models` / `probe` / `capture` / `get_record` / `compare` / `delete_record`），关闭时 dispose 该子 fiber 立即注销；默认关闭，因此不要求 profile 提供 `tools` 服务。开关选择持久化在数据目录的 `settings.json`，插件重载后恢复。
 
 目标发现：
 
@@ -87,7 +90,7 @@ llm-fingerprint/
 
 - UI 模型下拉里仍然列出，但 `disabled`，文本标注“不可关闭推理”；
 - 服务商下所有模型都不可用时，服务商选项标注“无可用模型”，模型选择禁用，Start 禁用，并显示原因；
-- Host `startCheckpoint` 再检查一次，API 和 agent 工具都无法绕过；
+- Host `startCheckpoint` 再检查一次，HTTP API 和 agent 工具都无法绕过；
 - `probe` 仍然可以用于诊断，但不会创建记录。
 
 这套判断完全由运行时配置/适配器元数据计算，不维护模型名黑名单。给某个模型在 DSH 配置里加上 `off` 映射后，它会自动变为可用，不需要改插件代码。
@@ -124,11 +127,12 @@ llm-fingerprint/
 
 ## 8. 限制与不做的事
 
-- 兼容范围：`engines.dsh` 限定 DSH 0.2.1 系列（`>=0.2.1-rc.2 <0.2.2-0`）；已在 rc.2 和 rc.4 验证安装、面板、API 与一次端到端采集。0.2.2 及以后需重新测试再放宽。
+- 兼容范围：`engines.dsh` 限定 DSH 0.2.1 系列（`>=0.2.1-rc.2 <0.2.2-0`）；安装、面板、API 与一次端到端采集已在 rc.2 和 rc.4 验证，面板 Agent 工具开关与 settings API 在 rc.5 上实测。0.2.2 及以后需重新测试再放宽。
 - 不做 post-reasoning 指纹模式；只能 reasoning 的模型被拒绝。
 - 不读取/保存 provider key；认证由 DSH 适配器负责。
 - 不读取 provider 返回的 model 字符串或聚合器上游路由；`ctx.llm.stream` 不暴露这些。
 - 不把“分布不一致”解释成“供应商故意掺水”；它只是可观察行为差异。
+- agent 工具默认关闭，由面板“设置”里的开关控制；开启后 6 个工具定义会进入每个请求的上下文（实测约 4.3 KB / 1.2K tokens），这是调试或自动化的成本，不是面板的依赖。
 - 不实现自动定时巡检、多端点距离矩阵、CSV 导出、自定义 battery 编辑器；这些是后续功能。
 
 ## 9. 维护
@@ -136,4 +140,5 @@ llm-fingerprint/
 - 提示词版本写在 `prompts.json` 的 `version` 和每条记录的 `promptVersion`；改提示词需要重新采集，旧记录不能直接和新记录混比。
 - 判定线常量在 `core.js` 的 `CUTOFF`；修改时需要同步 README/DESIGN 并说明校准来源。
 - 数据目录 append-only；分析产物可以删除后从 `responses.jsonl` 重新计算。
-- 代码无构建步骤；`npm run check` 做三个 JS 文件的语法检查，`npm test` 跑核心回归测试。
+- 面板设置只有 agent 工具开关，写在数据目录的 `settings.json`；删除该文件即恢复默认关闭，不影响记录数据。
+- 代码无构建步骤；`npm run check` 做三个 JS 文件的语法检查，`npm test` 跑核心与插件注册回归测试。

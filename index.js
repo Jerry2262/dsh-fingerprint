@@ -6,9 +6,10 @@
  * the per-cell empirical answer distribution. Any two records compare with the
  * same operation and the same decision cutoff.
  *
- * The same service methods serve three callers: agent tools, the web API used
- * by the panel, and the panel's polling reads. There is one implementation of
- * every operation.
+ * The service methods back the HTTP API that the Web panel calls; there is one
+ * implementation of every operation. The panel is the normal surface; its
+ * settings section can optionally expose the six agent tools, which stay out of
+ * the model context while the toggle is off (the default).
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -38,7 +39,7 @@ import {
   topAnswerOf,
 } from './core.js';
 
-export const inject = ['llm', 'tools', 'webServer'];
+export const inject = ['llm', 'webServer'];
 
 const CONCURRENCY = 8;
 const REQUEST_TIMEOUT_MS = 90_000;
@@ -926,6 +927,68 @@ function toolDefinitions(service) {
   ];
 }
 
+const AGENT_TOOLS_SETTINGS_FILE = 'settings.json';
+
+/** Read the persisted panel preferences; unreadable or malformed files fall back to the defaults. */
+function readSettings(file) {
+  try {
+    const value = JSON.parse(readFileSync(file, 'utf8'));
+    return { tools: value?.tools === true };
+  } catch {
+    return { tools: false };
+  }
+}
+
+/** Persist the panel preferences. Write failures surface to the caller instead of being swallowed. */
+function writeSettings(file, settings) {
+  writeFileSync(file, `${JSON.stringify({ tools: settings.tools === true }, null, 2)}\n`);
+}
+
+/**
+ * Own the optional agent tool surface: the six tools are registered exactly
+ * while the Web panel's toggle is on.
+ *
+ * The setting persists in the plugin's data directory (`settings.json`) and
+ * defaults to off, so a fresh install adds no tool definitions to the model
+ * context. Registration waits for the `tools` service through `ctx.inject`;
+ * turning the toggle off disposes that child fiber, which unregisters the tools
+ * immediately — no profile reload or DSH restart involved.
+ */
+function createAgentTools(ctx, service, root) {
+  const file = path.join(root, AGENT_TOOLS_SETTINGS_FILE);
+  let settings = readSettings(file);
+  let fiber;
+
+  const status = () => ({ enabled: settings.tools, available: Boolean(ctx.get('tools')) });
+  const start = () => {
+    if (fiber !== undefined) return;
+    fiber = ctx.inject(['tools'], function registerFingerprintTools(toolCtx) {
+      for (const definition of toolDefinitions(service)) {
+        toolCtx.effect(() => toolCtx.tools.register(definition), `llm-fingerprint: ${definition.name}`);
+      }
+    });
+  };
+  const stop = async () => {
+    const current = fiber;
+    fiber = undefined;
+    if (current !== undefined) await current.dispose();
+  };
+  const setEnabled = async (enabled) => {
+    if (enabled === true && !ctx.get('tools')) {
+      throw new Error('the tools service is unavailable in this profile, so agent tools cannot be enabled');
+    }
+    const next = { tools: enabled === true };
+    writeSettings(file, next);
+    settings = next;
+    if (settings.tools) start();
+    else await stop();
+    return status();
+  };
+
+  if (settings.tools) start();
+  return { status, setEnabled };
+}
+
 function sendJson(res, status, value) {
   if (res.headersSent) return;
   res.statusCode = status;
@@ -970,7 +1033,7 @@ function rejectUnauthenticated(ctx, req, res) {
   return true;
 }
 
-async function handleApi(ctx, req, res, service) {
+async function handleApi(ctx, req, res, service, agentTools) {
   if (rejectUnauthenticated(ctx, req, res)) return;
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -1001,6 +1064,16 @@ async function handleApi(ctx, req, res, service) {
       sendJson(res, 200, await service.compare(body.a, body.b));
       return;
     }
+    if (req.method === 'GET' && pathname === '/settings') {
+      sendJson(res, 200, { tools: agentTools.status() });
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/settings/tools') {
+      const body = await readRequestBody(req);
+      if (typeof body.enabled !== 'boolean') throw new Error('enabled must be a boolean');
+      sendJson(res, 200, { tools: await agentTools.setEnabled(body.enabled) });
+      return;
+    }
     const match = pathname.match(/^\/checkpoints\/([^/]+)$/);
     if (req.method === 'GET' && match) {
       sendJson(res, 200, await service.getCheckpoint(decodeURIComponent(match[1])));
@@ -1025,14 +1098,12 @@ export function apply(ctx, config = {}) {
   const lifetime = new AbortController();
   ctx.effect(() => () => { lifetime.abort(); }, 'llm-fingerprint: abort running captures');
   const service = createService(ctx, root, lifetime.signal);
-  for (const definition of toolDefinitions(service)) {
-    ctx.effect(() => ctx.tools.register(definition), `llm-fingerprint: ${definition.name}`);
-  }
+  const agentTools = createAgentTools(ctx, service, root);
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'prefix',
       path: API_PREFIX,
-      handler: (req, res) => handleApi(ctx, req, res, service),
+      handler: (req, res) => handleApi(ctx, req, res, service, agentTools),
     }),
     'llm-fingerprint: http api',
   );

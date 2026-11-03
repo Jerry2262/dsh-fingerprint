@@ -120,6 +120,11 @@ window.__ModuleLoader__.load({
       referenceValidity: 'valid rate 97.6% overall, per-model median 99.6%',
       referenceSplitHalf: 'split-half JSD 0.140 for the same model, 0.463 for different models',
       referenceScore: 'The cutoff is 0.280, the 1st percentile of different-model distances: in 100 different models, about 1 would still look the same.',
+      settingsTitle: 'Settings',
+      toolsTitle: 'Agent tools',
+      toolsHint: 'Expose the six capture and compare tools to agents. Adds about 4.3 KB of tool schema to every request; useful for debugging or automation.',
+      toolsUnavailable: 'This profile does not provide the tools service, so the switch cannot be turned on.',
+      toolsUpdated: 'Agent tool visibility updated.',
     };
 
     const zh = {
@@ -234,6 +239,11 @@ window.__ModuleLoader__.load({
       referenceValidity: '有效率总体 97.6%，模型内中位 99.6%',
       referenceSplitHalf: '同一模型的分半差异通常 0.140，不同模型通常 0.463',
       referenceScore: '判定线是 0.280，取自不同模型距离的 1% 分位：100 个不同模型里，大约只有 1 个会被看成相同。',
+      settingsTitle: '设置',
+      toolsTitle: 'Agent 工具',
+      toolsHint: '把 6 个采集、对比工具暴露给 agent。每个请求会多约 4.3 KB 工具 schema，适合调试或自动化。',
+      toolsUnavailable: '当前 profile 没有 tools 服务，无法开启这个开关。',
+      toolsUpdated: 'agent 工具开关已更新。',
     };
 
     async function api(path, init) {
@@ -307,6 +317,7 @@ window.__ModuleLoader__.load({
       if (/still running/i.test(text)) return t('errorStillRunning');
       if (/unknown fingerprint record/i.test(text)) return t('errorRecordNotFound');
       if (/no completed fingerprint|two record ids|record id is required/i.test(text)) return t('errorRecordNeedsFingerprint');
+      if (/tools service is unavailable/i.test(text)) return t('toolsUnavailable');
       return text;
     }
 
@@ -443,6 +454,39 @@ window.__ModuleLoader__.load({
         padding: '3px 7px',
         fontSize: '11px',
         cursor: 'pointer',
+      },
+      settingRow: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '20px',
+      },
+      switch: {
+        position: 'relative',
+        flex: 'none',
+        width: '38px',
+        height: '22px',
+        padding: 0,
+        borderRadius: '999px',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        cursor: 'pointer',
+        transition: 'background .15s ease, border-color .15s ease',
+      },
+      switchOn: {
+        background: 'var(--dsw-alias-brand-primary)',
+        borderColor: 'var(--dsw-alias-brand-primary)',
+      },
+      switchKnob: {
+        position: 'absolute',
+        top: '2px',
+        left: '2px',
+        width: '16px',
+        height: '16px',
+        borderRadius: '50%',
+        background: '#fff',
+        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
+        transition: 'transform .15s ease',
       },
       iconButton: {
         display: 'inline-flex',
@@ -707,6 +751,8 @@ window.__ModuleLoader__.load({
       const [detail, setDetail] = useState(null);
       const [detailId, setDetailId] = useState('');
       const [compact, setCompact] = useState(false);
+      const [toolsSetting, setToolsSetting] = useState(null);
+      const [savingTools, setSavingTools] = useState(false);
       const resultRef = useRef(null);
       const pageRef = useRef(null);
 
@@ -738,8 +784,13 @@ window.__ModuleLoader__.load({
         let cancelled = false;
         (async () => {
           try {
-            const [targetData, checkpointData] = await Promise.all([api('/targets'), api('/checkpoints')]);
+            const [targetData, checkpointData, settingsData] = await Promise.all([
+              api('/targets'),
+              api('/checkpoints'),
+              api('/settings').catch(() => null),
+            ]);
             if (cancelled) return;
+            if (settingsData) setToolsSetting(settingsData.tools || null);
             const providers = (targetData.providers || []).filter((entry) => (entry.models || []).length > 0);
             setTargets(providers);
             setCheckpoints(checkpointData.checkpoints || []);
@@ -891,6 +942,25 @@ window.__ModuleLoader__.load({
           setError(friendlyError(cause.message || cause, t));
         } finally {
           setDeleting(false);
+        }
+      }
+
+      async function toggleTools() {
+        if (!toolsSetting || savingTools) return;
+        setSavingTools(true);
+        setError('');
+        setNotice('');
+        try {
+          const data = await api('/settings/tools', {
+            method: 'POST',
+            body: JSON.stringify({ enabled: !toolsSetting.enabled }),
+          });
+          setToolsSetting(data.tools);
+          setNotice(t('toolsUpdated'));
+        } catch (cause) {
+          setError(friendlyError(cause.message || cause, t));
+        } finally {
+          setSavingTools(false);
         }
       }
 
@@ -1143,6 +1213,36 @@ window.__ModuleLoader__.load({
                 ? h('button', { style: S.buttonSecondary, onClick: () => setShowAllCells(!showAllCells) }, showAllCells ? t('showLess') : `${t('showAll')} (${comparison.details.length})`)
                 : null,
             ) : null,
+          ),
+
+          h(Section, { title: t('settingsTitle') },
+            h('div', { style: S.settingRow },
+              h('div', { style: { minWidth: 0 } },
+                h('div', { style: { fontSize: '13px', fontWeight: 600 } }, t('toolsTitle')),
+                h('p', { style: { ...S.hint, margin: '4px 0 0' } }, t('toolsHint')),
+                toolsSetting && !toolsSetting.available
+                  ? h('p', { style: { ...S.hint, margin: '4px 0 0', color: 'var(--dsw-alias-state-warn-primary)' } }, t('toolsUnavailable'))
+                  : null,
+              ),
+              h('button', {
+                type: 'button',
+                role: 'switch',
+                'aria-checked': Boolean(toolsSetting && toolsSetting.enabled),
+                'aria-label': t('toolsTitle'),
+                disabled: !toolsSetting || savingTools || !toolsSetting.available,
+                style: {
+                  ...S.switch,
+                  ...(toolsSetting && toolsSetting.enabled ? S.switchOn : {}),
+                  ...(!toolsSetting || savingTools || !toolsSetting.available ? S.disabled : {}),
+                },
+                onClick: toggleTools,
+              }, h('span', {
+                style: {
+                  ...S.switchKnob,
+                  transform: toolsSetting && toolsSetting.enabled ? 'translateX(16px)' : 'none',
+                },
+              })),
+            ),
           ),
         ),
         detail ? h('div', {
