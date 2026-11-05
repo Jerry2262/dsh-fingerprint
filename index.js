@@ -47,6 +47,8 @@ const MAX_TOKENS = 16;
 const TEMPERATURE = 1.0;
 const DEFAULT_REPS = 30;
 const API_PREFIX = '/llm-fingerprint/api';
+/** Feasibility checks are cheap and disposable: keep the newest logs only. */
+const PROBE_LOG_RETENTION = 20;
 
 function resolveDataDir(config) {
   const configured = config && typeof config.dataDir === 'string' && config.dataDir.trim();
@@ -476,6 +478,18 @@ function recoverInterruptedRecords(root) {
   return recovered;
 }
 
+/** Keep the probe directory bounded: probe ids start with a timestamp, so name order is age order. */
+function pruneProbeLogs(dir) {
+  const names = readdirSync(dir).filter((name) => /^probe-.+\.json$/.test(name)).sort();
+  for (const name of names.slice(0, Math.max(0, names.length - PROBE_LOG_RETENTION))) {
+    try {
+      rmSync(path.join(dir, name), { force: true });
+    } catch {
+      // A log that cannot be removed is not worth failing a diagnostic check over.
+    }
+  }
+}
+
 function checkpointSummary(meta) {
   return {
     id: meta.id,
@@ -650,6 +664,7 @@ function createService(ctx, root, lifetimeSignal) {
       summary,
       responses,
     }, null, 2)}\n`);
+    pruneProbeLogs(probeDir);
     return {
       probeId,
       provider: args.provider,
@@ -681,6 +696,10 @@ function createService(ctx, root, lifetimeSignal) {
       if (!cellById(cellId)) throw new Error(`unknown cell "${cellId}"`);
     }
     const reps = Math.max(1, Math.min(100, Number(args.reps ?? DEFAULT_REPS)));
+    const probeId = args.probeId == null ? null : String(args.probeId);
+    if (probeId !== null && !/^probe-[0-9A-Za-z-]+$/.test(probeId)) {
+      throw new Error('invalid probe id');
+    }
     const id = `cp-${nowUtc().replace(/[-:.]/g, '').slice(0, 15)}-${randomUUID().slice(0, 8)}`;
     const provider = await providerInfo(ctx, args.provider);
     const warnings = [];
@@ -702,6 +721,7 @@ function createService(ctx, root, lifetimeSignal) {
       reasoningEffort: effort,
       reasoningPolicy: effort == null ? 'none' : effortIsDisabled(effort) ? 'disabled' : 'least-available',
       reasoningLeakResponses: 0,
+      ...probeId === null ? {} : { probeId },
       modelInfo: adapterMetadata(info),
       request: { temperature: TEMPERATURE, maxTokens: MAX_TOKENS, systemPrompt: 'per-cell', sessionPolicy: 'new-per-sample-reuse-on-retry' },
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },

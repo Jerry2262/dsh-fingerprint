@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Jerry2262/dsh-fingerprint.git"
+    "url": "git+https://github.com/Jerry2262/dsh-fingerprint.git"
   },
   "homepage": "https://github.com/Jerry2262/dsh-fingerprint",
   "bugs": {

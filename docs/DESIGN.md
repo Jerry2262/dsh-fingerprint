@@ -78,6 +78,14 @@ llm-fingerprint/
 
 遇到 `MissingSessionID` 时停止调度后续采样，等待已经发出的并发请求结束后将记录标为失败，保留原始错误，不继续发完整批次。
 
+### 采集前的可行性检测
+
+面板选完服务商和模型后必须先点“检测可行性”：它调用 `POST /probe`（2 个 cell × 3 次，共 6 个请求），只有返回的 `summary.protocolCompliant` 为真时“开始采集”才可用；换服务商或模型会清掉结果，要求重新检测。
+
+原因是元数据里的 `off` 只说明适配器愿意请求关闭档位，不保证服务商真的照做。路由把 `off` 翻成“不发送 reasoning 参数”时，服务商可能仍按默认推理，`max_tokens=16` 全被推理吃光，整批响应都会变成 `post_reasoning`：`command-goat` 的 `openai-completions` 路由就这样跑完 1200 个请求才暴露 0 有效。这种失败只有在真的发一次请求后才看得见，所以检测放在采集之前，用 6 个请求代替 1200 个。
+
+检测只拦面板入口：HTTP API 和 agent 工具仍然可以直接 `POST /checkpoints`（`startCheckpoint` 只做元数据层面的 `supportsPaperProtocol` 检查），这条路径留给诊断和自动化。通过检测后再采集时，面板把 `probeId` 一并提交，记录到 `meta.probeId`，事后可以把记录和当次检测对上。检测日志按时间保留最近 `PROBE_LOG_RETENTION`（20）条，其余在写入时删除。
+
 ## 5. 兼容性硬拦截
 
 `supportsPaperProtocol(info)` 的规则：

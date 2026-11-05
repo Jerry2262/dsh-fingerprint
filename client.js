@@ -64,6 +64,12 @@ window.__ModuleLoader__.load({
       noCompatibleModels: 'This provider has no model that can disable reasoning.',
       noCompatibleModelsShort: 'No models eligible for capture',
       offAvailable: 'Reasoning will be disabled (off) for capture.',
+      checkTitle: 'Check feasibility',
+      checking: 'Checking…',
+      checkHint: 'Sends 2 cells × 3 samples (6 requests) to confirm this route answers in one word without a reasoning trace.',
+      checkRequired: 'Run the feasibility check first: it confirms the route satisfies the protocol in 6 requests instead of discovering it after the full battery.',
+      checkPassed: 'Feasibility check passed: {valid}/{responses} one-word answers, {leak} with a reasoning trace.',
+      checkFailed: 'Feasibility check failed: {valid}/{responses} one-word answers, {leak} with a reasoning trace, {errors} failed requests.',
       effort: 'Reasoning effort',
       started: 'Capture started:',
       error: 'Error',
@@ -183,6 +189,12 @@ window.__ModuleLoader__.load({
       noCompatibleModels: '该服务商没有支持关闭推理的模型，不能用于论文协议。',
       noCompatibleModelsShort: '无符合采集条件的模型',
       offAvailable: '采集时将关闭推理（off）。',
+      checkTitle: '检测可行性',
+      checking: '检测中…',
+      checkHint: '先用 2 个 cell × 3 次（6 个请求）确认这条路由能给出单词答案，且不带 reasoning trace。',
+      checkRequired: '请先检测可行性：用 6 个请求确认这条路由满足论文协议，避免跑完 1200 个请求才发现结果无效。',
+      checkPassed: '可行性检测通过：{valid}/{responses} 个单词答案，{leak} 个带 reasoning trace。',
+      checkFailed: '可行性检测未通过：{valid}/{responses} 个单词答案，{leak} 个带 reasoning trace，{errors} 个请求失败。',
       effort: '推理档位',
       started: '指纹采集已开始：',
       error: '错误',
@@ -309,6 +321,16 @@ window.__ModuleLoader__.load({
       return text;
     }
 
+    /** One line describing the last feasibility check for the selected target. */
+    function checkMessage(check, passed, t) {
+      const fill = (text) => text
+        .replace('{valid}', String(check.valid))
+        .replace('{responses}', String(check.responses))
+        .replace('{leak}', String(check.reasoningLeak))
+        .replace('{errors}', String(check.errors));
+      return check.error ? `${fill(t('checkFailed'))} ${check.error}` : fill(t(passed ? 'checkPassed' : 'checkFailed'));
+    }
+
     function friendlyError(message, t) {
       const text = String(message ?? '');
       if (/cannot disable reasoning/i.test(text)) return t('errorNoReasoning');
@@ -347,7 +369,7 @@ window.__ModuleLoader__.load({
     function visibleWarnings(comparison) {
       return (comparison.warnings || []).filter((item) => {
         if (comparison.verdictReason === 'partial_battery' && /full battery/i.test(item)) return false;
-        if (comparison.verdictReason === 'repetitions' && /threshold needs 30/i.test(item)) return false;
+        if (comparison.verdictReason === 'repetitions' && /cutoff needs 30/i.test(item)) return false;
         return true;
       });
     }
@@ -663,6 +685,48 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * Sidebar glyph: the fingerprint mark drawn to the same optical spec as the
+     * built-in panel icons — 16 viewBox, 1.33 stroke, currentColor, artwork in
+     * the 1.3–14.7 box — so it matches their visual size. The sidebar row owns
+     * the edge and passes it as `size`.
+     */
+    function PanelIcon({ size }) {
+      return h('svg', {
+        viewBox: '0 0 16 16',
+        width: size,
+        height: size,
+        fill: 'none',
+        'aria-hidden': true,
+        strokeWidth: 1.33,
+        style: { display: 'block', flex: 'none' },
+      },
+        h('rect', {
+          x: 1.97,
+          y: 1.97,
+          width: 12.06,
+          height: 12.06,
+          rx: 3.1,
+          stroke: 'currentColor',
+        }),
+        h('path', {
+          d: 'M4.84 9.57c0-1.83 1.15-3.15 3.16-3.15s3.16 1.32 3.16 3.15',
+          stroke: 'currentColor',
+          strokeLinecap: 'round',
+        }),
+        h('path', {
+          d: 'M6.27 10.35c0-1.05.58-1.83 1.73-1.83s1.73.78 1.73 1.83',
+          stroke: 'currentColor',
+          strokeLinecap: 'round',
+        }),
+        h('path', {
+          d: 'M8 11.4v-1.3',
+          stroke: 'currentColor',
+          strokeLinecap: 'round',
+        }),
+      );
+    }
+
     function TrashIcon({ size = 14 }) {
       return h('svg', {
         viewBox: '0 0 24 24',
@@ -737,6 +801,8 @@ window.__ModuleLoader__.load({
       const [modelId, setModelId] = useState('');
       const [reps, setReps] = useState(30);
       const [starting, setStarting] = useState(false);
+      const [checking, setChecking] = useState(false);
+      const [check, setCheck] = useState(null);
       const [comparing, setComparing] = useState(false);
       const [deleting, setDeleting] = useState(false);
       const [pendingDelete, setPendingDelete] = useState(null);
@@ -839,6 +905,9 @@ window.__ModuleLoader__.load({
       const hasIncompatible = models.some((entry) => entry.paperCompatible === false);
       const noCompatibleModels = models.length > 0 && compatibleModels.length === 0;
       const modelCompatible = model ? model.paperCompatible !== false : false;
+      /** A feasibility check only counts for the target it ran against. */
+      const checkMatches = Boolean(check && check.provider === providerId && check.model === modelId);
+      const checkPassed = checkMatches && check.passed === true;
       const completed = checkpoints.filter((entry) => entry.status === 'completed' || entry.status === 'completed_with_failures');
       const bOptions = completed.filter((entry) => entry.id !== a);
 
@@ -850,10 +919,54 @@ window.__ModuleLoader__.load({
         setModelId(nextModel ? nextModel.id : '');
         setWarning('');
         setNotice('');
+        setCheck(null);
+      }
+
+      async function runCheck() {
+        if (!providerId || !modelId || !modelCompatible) return;
+        setChecking(true);
+        setError('');
+        setWarning('');
+        setNotice('');
+        try {
+          const result = await api('/probe', {
+            method: 'POST',
+            body: JSON.stringify({ provider: providerId, model: modelId }),
+          });
+          const summary = result.summary || {};
+          setCheck({
+            provider: providerId,
+            model: modelId,
+            passed: summary.protocolCompliant === true,
+            responses: Number(summary.responses ?? 0),
+            valid: Number(summary.valid ?? 0),
+            reasoningLeak: Number(summary.reasoningLeak ?? 0),
+            errors: Number(summary.errors ?? 0),
+            probeId: result.probeId ?? null,
+          });
+        } catch (cause) {
+          setCheck({
+            provider: providerId,
+            model: modelId,
+            passed: false,
+            responses: 0,
+            valid: 0,
+            reasoningLeak: 0,
+            errors: 1,
+            error: friendlyError(cause.message || cause, t),
+            probeId: null,
+          });
+        } finally {
+          setChecking(false);
+        }
       }
 
       async function start() {
         if (!providerId || !modelId) return;
+        if (!checkPassed) {
+          setError(t('checkRequired'));
+          return;
+        }
         if (!modelCompatible) {
           setError(noCompatibleModels ? t('noCompatibleModels') : t('noOff'));
           return;
@@ -865,7 +978,12 @@ window.__ModuleLoader__.load({
         try {
           const created = await api('/checkpoints', {
             method: 'POST',
-            body: JSON.stringify({ provider: providerId, model: modelId, reps: Number(reps) }),
+            body: JSON.stringify({
+              provider: providerId,
+              model: modelId,
+              reps: Number(reps),
+              ...(checkPassed && check.probeId ? { probeId: check.probeId } : {}),
+            }),
           });
           const recordId = created.recordId ?? created.checkpointId;
           setNotice(`${t('started')} ${recordId}`);
@@ -1004,7 +1122,10 @@ window.__ModuleLoader__.load({
                 h('select', {
                   style: S.input,
                   value: modelId,
-                  onChange: (event) => setModelId(event.target.value),
+                  onChange: (event) => {
+                    setModelId(event.target.value);
+                    setCheck(null);
+                  },
                   disabled: models.length === 0 || noCompatibleModels,
                 },
                   h('option', { value: '' }, models.length === 0 ? t('noModels') : noCompatibleModels ? t('noCompatibleModelsShort') : '—'),
@@ -1028,11 +1149,19 @@ window.__ModuleLoader__.load({
                   onChange: (event) => setReps(Math.max(10, Math.min(100, Number(event.target.value) || 30))),
                 }),
               ),
-              h('button', {
-                style: { ...S.button, ...(starting || !modelCompatible ? S.disabled : {}) },
-                disabled: starting || !providerId || !modelId || !modelCompatible,
-                onClick: start,
-              }, starting ? t('starting') : t('start')),
+              h('div', { style: { display: 'flex', gap: '8px', flex: '1 1 auto', justifyContent: 'flex-end' } },
+                h('button', {
+                  style: { ...S.buttonSecondary, ...(checking || !modelCompatible || !providerId || !modelId ? S.disabled : {}) },
+                  disabled: checking || starting || !providerId || !modelId || !modelCompatible,
+                  onClick: runCheck,
+                }, checking ? t('checking') : t('checkTitle')),
+                h('button', {
+                  style: { ...S.button, ...(starting || !modelCompatible || !checkPassed ? S.disabled : {}) },
+                  disabled: starting || !providerId || !modelId || !modelCompatible || !checkPassed,
+                  title: checkPassed ? undefined : t('checkRequired'),
+                  onClick: start,
+                }, starting ? t('starting') : t('start')),
+              ),
             ),
             h('div', { style: { ...S.hint, marginTop: '10px' } },
               `${t('estimated')}: ${estimate} ${t('requests')} (40 ${t('cellsUnit')} × ${reps})`,
@@ -1052,6 +1181,16 @@ window.__ModuleLoader__.load({
                 ? h('div', { style: { ...S.hint, color: 'var(--dsw-alias-state-warn-primary)' } }, t('noCompatibleModels'))
                 : null,
             hasIncompatible ? h('div', { style: S.hint }, t('incompatibleHint')) : null,
+            model
+              ? h('div', {
+                style: {
+                  ...S.hint,
+                  color: checkMatches
+                    ? (checkPassed ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-error-primary)')
+                    : 'var(--dsw-alias-label-secondary)',
+                },
+              }, checkMatches ? checkMessage(check, checkPassed, t) : t('checkHint'))
+              : null,
           ),
 
           h(Section, {
@@ -1376,7 +1515,7 @@ window.__ModuleLoader__.load({
           order: 30,
           locale: NS,
           label: () => t('title'),
-        }, ({ label }) => h(Mark, { size: 18 })));
+        }, PanelIcon));
       },
     };
   },
