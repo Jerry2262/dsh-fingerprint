@@ -21,7 +21,7 @@ dsh-fingerprint 把 DSH 里已经配置好的 `provider/model` 路由当作审�
 ## 要求
 
 - 一个启用 Web GUI 的 DSH profile（需要 `llm`、`webServer` 服务；开启 agent 工具时还需要 `tools`）。
-- DSH 0.2.1 系列：安装、面板、API 与端到端采集已在 `0.2.1-rc.2` 和 `0.2.1-rc.4` 上验证；面板的 Agent 工具开关和 settings API 在 `0.2.1-rc.5` 上实测。`engines.dsh` 限定 `>=0.2.1-rc.2 <0.2.2-0`。
+- DSH 0.2 系列：安装、面板、API 与端到端采集已在 `0.2.1-rc.2`、`0.2.1-rc.4` 和 `0.2.2-rc.1` 上验证；面板的 Agent 工具开关和 settings API 在 `0.2.1-rc.5` 与 `0.2.2-rc.1` 上实测。`engines.dsh` 限定 `>=0.2.1-rc.2 <0.3.0-0`。DSH 0.2.2 起按 `engines.dsh` 判定插件兼容性，范围不覆盖当前运行时会拒绝安装，并在启动时跳过该 bundle（面板、API 和工具都不挂载）。
 - 至少一个配置好的、能关闭 reasoning（`off` / `none`）或本身不推理的 provider/model。
 - Node.js（由 DSH 自带，无需单独安装）。
 
