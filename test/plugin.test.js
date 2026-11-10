@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -47,14 +47,26 @@ function fakeRequest(method, path, body) {
 /**
  * Apply the plugin to a fake host and expose the registered HTTP API plus the
  * agent-tool side effects, so the panel-facing routes can be exercised directly.
+ *
+ * The fake config editor mimics the Loader's volatile-only path: it writes the
+ * row config and notifies the plugin through `loader/volatile-update` instead of
+ * reloading it, which is what a `.volatile()` field gets in a real profile.
  */
 function boot(options = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'dsh-fingerprint-test-'));
-  if (options.persisted !== undefined) {
-    writeFileSync(join(dataDir, 'settings.json'), `${JSON.stringify(options.persisted, null, 2)}\n`);
+  if (options.legacySettings !== undefined) {
+    writeFileSync(join(dataDir, 'settings.json'), `${JSON.stringify(options.legacySettings, null, 2)}\n`);
   }
 
   const toolsAvailable = options.toolsAvailable !== false;
+  const configEditorAvailable = options.configEditorAvailable !== false;
+  const state = { tools: options.enabled === true };
+  const config = { dataDir, tools: { get: () => state.tools } };
+  const entry = {
+    options: { id: 'llm-fingerprint', name: 'dsh-fingerprint', config: {} },
+    fiber: { uid: 'fingerprint-plugin' },
+  };
+  const listeners = [];
   const registered = [];
   const disposed = [];
   const routes = [];
@@ -68,13 +80,35 @@ function boot(options = {}) {
     },
   };
 
+  const configEditor = {
+    entries() {
+      return [entry];
+    },
+    async edit(target, change) {
+      const next = change(structuredClone(target.options.config ?? {}), {});
+      target.options.config = next;
+      if (typeof next.tools === 'boolean') state.tools = next.tools;
+      for (const listener of listeners) await listener([['tools']]);
+    },
+  };
+
   const ctx = {
+    fiber: { uid: 'fingerprint-plugin' },
+    logger: { warn() {} },
     effect(fn) {
       return fn();
+    },
+    on(event, handler) {
+      if (event === 'loader/volatile-update') listeners.push(handler);
+      return () => {
+        const index = listeners.indexOf(handler);
+        if (index >= 0) listeners.splice(index, 1);
+      };
     },
     get(name) {
       if (name === 'connection') return { requestRejection: () => undefined };
       if (name === 'tools') return toolsAvailable ? toolsService : undefined;
+      if (name === 'configEditor') return configEditorAvailable ? configEditor : undefined;
       return undefined;
     },
     llm: {},
@@ -103,7 +137,7 @@ function boot(options = {}) {
     },
   };
 
-  apply(ctx, { dataDir });
+  apply(ctx, config);
   const settingsFile = join(dataDir, 'settings.json');
   const handler = routes.find((route) => route.path === '/llm-fingerprint/api').handler;
 
@@ -122,6 +156,7 @@ function boot(options = {}) {
     disposed,
     routes,
     settingsFile,
+    entry,
     call,
     dispose() {
       rmSync(dataDir, { recursive: true, force: true });
@@ -133,29 +168,30 @@ test('static dependencies do not require the tools service', () => {
   assert.deepEqual(inject, ['llm', 'webServer']);
 });
 
-test('the default settings keep agent tools off', async () => {
+test('the default config keeps agent tools off', async () => {
   const app = boot();
   try {
     assert.deepEqual(app.registered, []);
     assert.equal(existsSync(app.settingsFile), false);
     const { status, body } = await app.call('GET', '/settings');
     assert.equal(status, 200);
-    assert.deepEqual(body.tools, { enabled: false, available: true });
+    assert.deepEqual(body.tools, { enabled: false, available: true, editable: true });
   } finally {
     app.dispose();
   }
 });
 
-test('the panel switch registers the six agent tools and persists the choice', async () => {
+test('the panel switch writes the row config and registers the six agent tools', async () => {
   const app = boot();
   try {
     const { status, body } = await app.call('POST', '/settings/tools', { enabled: true });
     assert.equal(status, 200);
-    assert.deepEqual(body.tools, { enabled: true, available: true });
+    assert.deepEqual(body.tools, { enabled: true, available: true, editable: true });
     assert.deepEqual(app.registered, FINGERPRINT_TOOLS);
-    assert.deepEqual(JSON.parse(readFileSync(app.settingsFile, 'utf8')), { tools: true });
+    assert.deepEqual(app.entry.options.config, { tools: true });
+    assert.equal(existsSync(app.settingsFile), false);
     const after = await app.call('GET', '/settings');
-    assert.deepEqual(after.body.tools, { enabled: true, available: true });
+    assert.deepEqual(after.body.tools, { enabled: true, available: true, editable: true });
   } finally {
     app.dispose();
   }
@@ -167,18 +203,30 @@ test('turning the switch off unregisters the agent tools immediately', async () 
     await app.call('POST', '/settings/tools', { enabled: true });
     const { status, body } = await app.call('POST', '/settings/tools', { enabled: false });
     assert.equal(status, 200);
-    assert.deepEqual(body.tools, { enabled: false, available: true });
+    assert.deepEqual(body.tools, { enabled: false, available: true, editable: true });
     assert.deepEqual(app.disposed, FINGERPRINT_TOOLS);
-    assert.deepEqual(JSON.parse(readFileSync(app.settingsFile, 'utf8')), { tools: false });
+    assert.deepEqual(app.entry.options.config, { tools: false });
   } finally {
     app.dispose();
   }
 });
 
-test('a persisted on setting registers the agent tools at mount', () => {
-  const app = boot({ persisted: { tools: true } });
+test('an enabled row config registers the agent tools at mount', () => {
+  const app = boot({ enabled: true });
   try {
     assert.deepEqual(app.registered, FINGERPRINT_TOOLS);
+    assert.deepEqual(app.disposed, []);
+  } finally {
+    app.dispose();
+  }
+});
+
+test('a legacy settings.json is not read', async () => {
+  const app = boot({ legacySettings: { tools: true } });
+  try {
+    assert.deepEqual(app.registered, []);
+    const { body } = await app.call('GET', '/settings');
+    assert.equal(body.tools.enabled, false);
   } finally {
     app.dispose();
   }
@@ -191,7 +239,22 @@ test('enabling is refused without the tools service', async () => {
     assert.equal(status, 400);
     assert.match(body.error, /tools service is unavailable/i);
     assert.deepEqual(app.registered, []);
-    assert.equal(existsSync(app.settingsFile), false);
+    assert.deepEqual(app.entry.options.config, {});
+  } finally {
+    app.dispose();
+  }
+});
+
+test('the switch is read-only without the config editor', async () => {
+  const app = boot({ configEditorAvailable: false });
+  try {
+    const current = await app.call('GET', '/settings');
+    assert.deepEqual(current.body.tools, { enabled: false, available: true, editable: false });
+    const { status, body } = await app.call('POST', '/settings/tools', { enabled: true });
+    assert.equal(status, 400);
+    assert.match(body.error, /configEditor service is unavailable/i);
+    assert.deepEqual(app.registered, []);
+    assert.deepEqual(app.entry.options.config, {});
   } finally {
     app.dispose();
   }
@@ -204,6 +267,7 @@ test('a non-boolean switch value is rejected', async () => {
     assert.equal(status, 400);
     assert.match(body.error, /enabled must be a boolean/i);
     assert.deepEqual(app.registered, []);
+    assert.deepEqual(app.entry.options.config, {});
   } finally {
     app.dispose();
   }

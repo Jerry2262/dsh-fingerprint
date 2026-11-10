@@ -8,7 +8,7 @@
 - **指纹记录**：对某个目标在某一时刻做一次完整采集的结果。记录本身就是指纹，包含 40 个 cell 的经验答案分布和派生统计。
 - **对比**：任意两条记录之间的同一个操作。跨模型、跨服务商、同一目标的前后两次，都是同一个比较操作，只有 `relation` 标签不同。
 - **单一实现**：Host service 是唯一操作层；Web 面板通过 HTTP API 调用，可选的 agent 工具调用同一组方法。
-- **默认手动**：插件默认不向 agent 注册工具，所有操作在面板里完成，因此不占用模型上下文；面板“设置”里的开关打开时才注册 6 个 agent 工具，选择持久化在数据目录的 `settings.json`。
+- **默认手动**：插件默认不向 agent 注册工具，所有操作在面板里完成，因此不占用模型上下文；面板“设置”里的开关打开时才注册 6 个 agent 工具。开关对应 volatile 的 `tools` row config，值存在 profile 的 `cordis.patch.yml`。
 
 ## 2. 协议常量
 
@@ -37,7 +37,6 @@ llm-fingerprint/
     responses.jsonl    # 每条成功请求一行，append-only
     fingerprint.json   # 派生分布、valid rate、分半一致性、cell 明细
   probes/<probe-id>.json
-  settings.json        # 面板设置（目前只有 agent 工具开关）
 ```
 
 - 记录 id 形如 `cp-20261020T034450-59c80896`，服务端用严格格式校验，防止路径穿越。
@@ -62,7 +61,7 @@ llm-fingerprint/
 - `GET /settings`
 - `POST /settings/tools`
 
-所有操作都在 `createService(ctx, root)` 返回的同一组方法里实现。面板“设置”里的 Agent 工具开关调用 `POST /settings/tools`：Host 按需通过 `ctx.inject(['tools'], ...)` 注册 6 个 agent 工具（`llm_fingerprint_list_models` / `probe` / `capture` / `get_record` / `compare` / `delete_record`），关闭时 dispose 该子 fiber 立即注销；默认关闭，因此不要求 profile 提供 `tools` 服务。开关选择持久化在数据目录的 `settings.json`，插件重载后恢复。
+所有操作都在 `createService(ctx, root)` 返回的同一组方法里实现。面板“设置”里的 Agent 工具开关调用 `POST /settings/tools`，Host 通过 `ctx.configEditor.edit()` 把 `config.tools` 写回 profile 的 `cordis.patch.yml`。`tools` 在 `Config` 里声明为 `.volatile()`：Loader 对这类变更不重载插件，只更新运行中的配置引用并发 `loader/volatile-update`，插件据此注册 6 个 agent 工具（`llm_fingerprint_list_models` / `probe` / `capture` / `get_record` / `compare` / `delete_record`）或 dispose 注册它们的子 fiber。默认关闭，因此不要求 profile 提供 `tools` 服务；profile 没有 `configEditor` 时开关只读，直接改 patch 后重启生效。
 
 目标发现：
 
@@ -148,5 +147,6 @@ llm-fingerprint/
 - 提示词版本写在 `prompts.json` 的 `version` 和每条记录的 `promptVersion`；改提示词需要重新采集，旧记录不能直接和新记录混比。
 - 判定线常量在 `core.js` 的 `CUTOFF`；修改时需要同步 README/DESIGN 并说明校准来源。
 - 数据目录 append-only；分析产物可以删除后从 `responses.jsonl` 重新计算。
-- 面板设置只有 agent 工具开关，写在数据目录的 `settings.json`；删除该文件即恢复默认关闭，不影响记录数据。
+- 面板设置只有 agent 工具开关，写在 profile 的 `cordis.patch.yml` 里插件 row 的 `config.tools`；删掉该字段即恢复默认关闭，不影响记录数据。
 - 代码无构建步骤；`npm run check` 做三个 JS 文件的语法检查，`npm test` 跑核心与插件注册回归测试。
+- 唯一的运行时依赖是 `@deepseek-ai/schemastery`，用于声明 `Config`；其余只用 Node 内置模块。

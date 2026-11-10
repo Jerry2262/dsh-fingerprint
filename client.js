@@ -130,6 +130,7 @@ window.__ModuleLoader__.load({
       toolsTitle: 'Agent tools',
       toolsHint: 'Expose the six capture and compare tools to agents. Adds about 4.3 KB of tool schema to every request; useful for debugging or automation.',
       toolsUnavailable: 'This profile does not provide the tools service, so the switch cannot be turned on.',
+      toolsReadOnly: 'This profile does not expose the config editor, so change this switch in cordis.patch.yml.',
       toolsUpdated: 'Agent tool visibility updated.',
     };
 
@@ -255,6 +256,7 @@ window.__ModuleLoader__.load({
       toolsTitle: 'Agent 工具',
       toolsHint: '把 6 个采集、对比工具暴露给 agent。每个请求会多约 4.3 KB 工具 schema，适合调试或自动化。',
       toolsUnavailable: '当前 profile 没有 tools 服务，无法开启这个开关。',
+      toolsReadOnly: '当前 profile 没有 configEditor 服务，这个开关只能在 cordis.patch.yml 里改。',
       toolsUpdated: 'agent 工具开关已更新。',
     };
 
@@ -340,6 +342,7 @@ window.__ModuleLoader__.load({
       if (/unknown fingerprint record/i.test(text)) return t('errorRecordNotFound');
       if (/no completed fingerprint|two record ids|record id is required/i.test(text)) return t('errorRecordNeedsFingerprint');
       if (/tools service is unavailable/i.test(text)) return t('toolsUnavailable');
+      if (/configEditor service is unavailable/i.test(text)) return t('toolsReadOnly');
       return text;
     }
 
@@ -1083,6 +1086,7 @@ window.__ModuleLoader__.load({
       }
 
       const estimate = 40 * Math.max(10, Math.min(100, Number(reps) || 30));
+      const toolsLocked = !toolsSetting || savingTools || !toolsSetting.available || toolsSetting.editable === false;
 
       return h('div', { style: S.page },
         h('div', { style: S.inner, ref: pageRef },
@@ -1361,18 +1365,20 @@ window.__ModuleLoader__.load({
                 h('p', { style: { ...S.hint, margin: '4px 0 0' } }, t('toolsHint')),
                 toolsSetting && !toolsSetting.available
                   ? h('p', { style: { ...S.hint, margin: '4px 0 0', color: 'var(--dsw-alias-state-warn-primary)' } }, t('toolsUnavailable'))
-                  : null,
+                  : toolsSetting && toolsSetting.editable === false
+                    ? h('p', { style: { ...S.hint, margin: '4px 0 0', color: 'var(--dsw-alias-state-warn-primary)' } }, t('toolsReadOnly'))
+                    : null,
               ),
               h('button', {
                 type: 'button',
                 role: 'switch',
                 'aria-checked': Boolean(toolsSetting && toolsSetting.enabled),
                 'aria-label': t('toolsTitle'),
-                disabled: !toolsSetting || savingTools || !toolsSetting.available,
+                disabled: toolsLocked,
                 style: {
                   ...S.switch,
                   ...(toolsSetting && toolsSetting.enabled ? S.switchOn : {}),
-                  ...(!toolsSetting || savingTools || !toolsSetting.available ? S.disabled : {}),
+                  ...(toolsLocked ? S.disabled : {}),
                 },
                 onClick: toggleTools,
               }, h('span', {

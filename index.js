@@ -9,7 +9,8 @@
  * The service methods back the HTTP API that the Web panel calls; there is one
  * implementation of every operation. The panel is the normal surface; its
  * settings section can optionally expose the six agent tools, which stay out of
- * the model context while the toggle is off (the default).
+ * the model context unless the volatile `tools` row config is on (off by
+ * default, and always reachable from the panel).
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -24,6 +25,8 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import Schema from '@deepseek-ai/schemastery';
 
 import {
   CELLS,
@@ -40,6 +43,20 @@ import {
 } from './core.js';
 
 export const inject = ['llm', 'webServer'];
+
+/**
+ * The plugin's row config. `tools` is volatile: the panel switch and the
+ * Settings form edit the value stored in the profile patch, and a volatile-only
+ * change updates this running config reference and emits
+ * `loader/volatile-update` instead of reloading the plugin.
+ */
+export const Config = Schema.object({
+  dataDir: Schema.string().default('').description('记录和探测日志的数据目录，默认 $DSH_HOME/llm-fingerprint。'),
+  tools: Schema.boolean()
+    .default(false)
+    .description('把 6 个采集、对比工具（llm_fingerprint_*）暴露给 agent。每个请求会多约 4.3 KB 工具 schema，适合调试或自动化。')
+    .volatile(),
+});
 
 const CONCURRENCY = 8;
 const REQUEST_TIMEOUT_MS = 90_000;
@@ -947,39 +964,20 @@ function toolDefinitions(service) {
   ];
 }
 
-const AGENT_TOOLS_SETTINGS_FILE = 'settings.json';
-
-/** Read the persisted panel preferences; unreadable or malformed files fall back to the defaults. */
-function readSettings(file) {
-  try {
-    const value = JSON.parse(readFileSync(file, 'utf8'));
-    return { tools: value?.tools === true };
-  } catch {
-    return { tools: false };
-  }
-}
-
-/** Persist the panel preferences. Write failures surface to the caller instead of being swallowed. */
-function writeSettings(file, settings) {
-  writeFileSync(file, `${JSON.stringify({ tools: settings.tools === true }, null, 2)}\n`);
-}
-
 /**
  * Own the optional agent tool surface: the six tools are registered exactly
- * while the Web panel's toggle is on.
+ * while the `tools` row config is on.
  *
- * The setting persists in the plugin's data directory (`settings.json`) and
- * defaults to off, so a fresh install adds no tool definitions to the model
- * context. Registration waits for the `tools` service through `ctx.inject`;
- * turning the toggle off disposes that child fiber, which unregisters the tools
- * immediately — no profile reload or DSH restart involved.
+ * The value lives in the profile patch and defaults to off, so a fresh install
+ * adds no tool definitions to the model context. Registration waits for the
+ * `tools` service through `ctx.inject`; turning the switch off disposes that
+ * child fiber, which unregisters the tools immediately.
  */
-function createAgentTools(ctx, service, root) {
-  const file = path.join(root, AGENT_TOOLS_SETTINGS_FILE);
-  let settings = readSettings(file);
+function createAgentTools(ctx, service, config) {
   let fiber;
 
-  const status = () => ({ enabled: settings.tools, available: Boolean(ctx.get('tools')) });
+  const enabled = () => config.tools?.get?.() === true;
+  const status = () => ({ enabled: enabled(), available: Boolean(ctx.get('tools')) });
   const start = () => {
     if (fiber !== undefined) return;
     fiber = ctx.inject(['tools'], function registerFingerprintTools(toolCtx) {
@@ -993,20 +991,25 @@ function createAgentTools(ctx, service, root) {
     fiber = undefined;
     if (current !== undefined) await current.dispose();
   };
-  const setEnabled = async (enabled) => {
-    if (enabled === true && !ctx.get('tools')) {
-      throw new Error('the tools service is unavailable in this profile, so agent tools cannot be enabled');
-    }
-    const next = { tools: enabled === true };
-    writeSettings(file, next);
-    settings = next;
-    if (settings.tools) start();
+  const sync = async () => {
+    if (enabled()) start();
     else await stop();
-    return status();
   };
 
-  if (settings.tools) start();
-  return { status, setEnabled };
+  if (enabled()) start();
+  return { status, sync };
+}
+
+/**
+ * The profile row that owns this plugin instance, when the active profile
+ * exposes the config editor. The panel switch writes the row config through it;
+ * without it the switch stays read-only and `cordis.patch.yml` is the way in.
+ */
+function ownConfigEntry(ctx) {
+  const editor = ctx.get('configEditor');
+  const uid = ctx.fiber?.uid;
+  if (!editor || uid === undefined) return undefined;
+  return editor.entries().find((entry) => entry.fiber?.uid === uid);
 }
 
 function sendJson(res, status, value) {
@@ -1085,13 +1088,22 @@ async function handleApi(ctx, req, res, service, agentTools) {
       return;
     }
     if (req.method === 'GET' && pathname === '/settings') {
-      sendJson(res, 200, { tools: agentTools.status() });
+      sendJson(res, 200, { tools: { ...agentTools.status(), editable: ownConfigEntry(ctx) !== undefined } });
       return;
     }
     if (req.method === 'POST' && pathname === '/settings/tools') {
       const body = await readRequestBody(req);
       if (typeof body.enabled !== 'boolean') throw new Error('enabled must be a boolean');
-      sendJson(res, 200, { tools: await agentTools.setEnabled(body.enabled) });
+      if (body.enabled === true && !ctx.get('tools')) {
+        throw new Error('the tools service is unavailable in this profile, so agent tools cannot be enabled');
+      }
+      const editor = ctx.get('configEditor');
+      const entry = ownConfigEntry(ctx);
+      if (!editor || entry === undefined) {
+        throw new Error('the configEditor service is unavailable in this profile, so the switch can only be changed in cordis.patch.yml');
+      }
+      await editor.edit(entry, (current) => ({ ...current, tools: body.enabled }));
+      sendJson(res, 200, { tools: { ...agentTools.status(), editable: true } });
       return;
     }
     const match = pathname.match(/^\/checkpoints\/([^/]+)$/);
@@ -1118,7 +1130,10 @@ export function apply(ctx, config = {}) {
   const lifetime = new AbortController();
   ctx.effect(() => () => { lifetime.abort(); }, 'llm-fingerprint: abort running captures');
   const service = createService(ctx, root, lifetime.signal);
-  const agentTools = createAgentTools(ctx, service, root);
+  const agentTools = createAgentTools(ctx, service, config);
+  ctx.on('loader/volatile-update', () => {
+    agentTools.sync().catch((error) => ctx.logger?.warn?.(error));
+  });
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'prefix',
