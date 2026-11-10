@@ -1,6 +1,6 @@
 {
   "name": "dsh-fingerprint",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "type": "module",
   "description": "Paper-protocol fingerprint records and comparison panel for configured DSH provider/model routes.",
   "license": "MIT",
