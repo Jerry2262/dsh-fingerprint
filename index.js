@@ -51,10 +51,10 @@ export const inject = ['llm', 'webServer'];
  * `loader/volatile-update` instead of reloading the plugin.
  */
 export const Config = Schema.object({
-  dataDir: Schema.string().default('').description('记录和探测日志的数据目录，默认 $DSH_HOME/llm-fingerprint。'),
+  dataDir: Schema.string().default('').description('Data directory for fingerprint records and probe logs; empty uses $DSH_HOME/llm-fingerprint.'),
   tools: Schema.boolean()
     .default(false)
-    .description('把 6 个采集、对比工具（llm_fingerprint_*）暴露给 agent。每个请求会多约 4.3 KB 工具 schema，适合调试或自动化。')
+    .description('Expose the six capture and compare tools (llm_fingerprint_*) to agents. Adds about 4.3 KB of tool schema to every request; useful for debugging or automation.')
     .volatile(),
 });
 
