@@ -21,7 +21,7 @@ dsh-fingerprint 把 DSH 里已经配置好的 `provider/model` 路由当作审�
 ## 要求
 
 - 一个启用 Web GUI 的 DSH profile（需要 `llm`、`webServer` 服务；开启 agent 工具时还需要 `tools`）。面板开关通过 profile 的 `configEditor` 写入 row config；profile 没有这个服务时开关只读，直接改 `cordis.patch.yml` 后重启生效。
-- DSH 0.2 系列：安装、面板、API 与端到端采集已在 `0.2.1-rc.2`、`0.2.1-rc.4` 和 `0.2.2-rc.1` 上验证；settings API 在 `0.2.1-rc.5` 与 `0.2.2-rc.1` 上实测。开关改为写 row config 之后，这条写入路径只在单元测试和 `0.2.1-rc.5` 的组合 schema 上验证过，尚未在 rc.2/rc.4/`0.2.2-rc.1` 上实跑。`engines.dsh` 限定 `>=0.2.1-rc.2 <0.3.0-0`。DSH 0.2.2 起按 `engines.dsh` 判定插件兼容性，范围不覆盖当前运行时会拒绝安装，并在启动时跳过该 bundle（面板、API 和工具都不挂载）。
+- DSH 0.2 系列（`engines.dsh`：`>=0.2.1-rc.2 <0.3.0-0`）。插件只使用 DSH 的公开接口（`llm`、`webServer`、`tools`、`configEditor`、客户端槽位，以及 Config 与 patch 行），0.2 系列内的小版本升级按此预期兼容；升级后跑一次“检测可行性”和一次采集即可自检，不必每次改文档。0.2.2 起 DSH 按 `engines.dsh` 判定兼容性，范围不覆盖当前运行时会拒绝安装，并在启动时跳过该 bundle（面板、API 和工具都不挂载）；`0.3.0` 及以后需重新测试再放宽。
 - 至少一个配置好的、能关闭 reasoning（`off` / `none`）或本身不推理的 provider/model。
 - Node.js（由 DSH 自带，无需单独安装）。
 

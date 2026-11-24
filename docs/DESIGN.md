@@ -134,7 +134,7 @@ llm-fingerprint/
 
 ## 8. 限制与不做的事
 
-- 兼容范围：`engines.dsh` 限定 DSH 0.2 系列（`>=0.2.1-rc.2 <0.3.0-0`）；安装、面板、API 与一次端到端采集已在 rc.2、rc.4 与 `0.2.2-rc.1` 验证，面板 Agent 工具开关与 settings API 在 rc.5 与 `0.2.2-rc.1` 上实测。0.2.2 起 DSH 按 `engines.dsh` 判定兼容性，不覆盖时安装被拒绝、启动时跳过该 bundle；0.3.0 及以后需重新测试再放宽。
+- 兼容范围：`engines.dsh` 限定 DSH 0.2 系列（`>=0.2.1-rc.2 <0.3.0-0`）。插件只依赖 DSH 的公开接口（`llm`、`webServer`、`tools`、`configEditor`、客户端槽位、Config 与 patch 行），0.2 系列的小版本升级预期兼容，升级后跑一次探针与一次采集即可自检。0.2.2 起 DSH 按 `engines.dsh` 判定兼容性，不覆盖时安装被拒绝、启动时跳过该 bundle；`0.3.0` 及以后需重新测试再放宽。
 - 不做 post-reasoning 指纹模式；只能 reasoning 的模型被拒绝。
 - 不读取/保存 provider key；认证由 DSH 适配器负责。
 - 不读取 provider 返回的 model 字符串或聚合器上游路由；`ctx.llm.stream` 不暴露这些。
